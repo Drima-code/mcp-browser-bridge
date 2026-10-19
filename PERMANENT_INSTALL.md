@@ -1,6 +1,6 @@
 # Install MCP Browser Bridge permanently in normal Firefox
 
-Version 0.2.1, Firefox 142+ on Linux. The archive built here is **unsigned**.
+Version 0.2.2, Firefox 142+ on Linux. The archive built here is **unsigned**.
 Normal Firefox installs a permanent copy only after Mozilla signs it. A public
 store listing is optional; self-distribution is sufficient for personal use.
 Do not disable Firefox signature checks or change browser security settings.
@@ -14,7 +14,7 @@ npx --yes web-ext lint --source-dir extension --warnings-as-errors
 uv run --frozen python scripts/package_extension.py
 ```
 
-Upload `artifacts/mcp-browser-bridge-0.2.1.zip`. The archive contains only the six
+Upload `artifacts/mcp-browser-bridge-0.2.2.zip`. The archive contains only the six
 extension assets, license and privacy notice. It contains no browser profiles,
 credentials, job applications or native host executable. Source JS is plain,
 readable code with no build/minification step or remote executable code.
@@ -70,7 +70,10 @@ Check the connection with:
 uv run --frozen drima-browser regular-call tabs
 ```
 
-Uploads, logins, CAPTCHA and interviews are still completed manually. Snapshots
+Version 0.2.2 supports explicit file uploads through `regular_browser_upload` or
+`regular-call upload`; see README.md for limits and usage. Reconnect the Codex MCP
+server if its tool list predates the new upload tool. Logins, CAPTCHA and interviews
+are still completed manually. Snapshots
 and form actions operate in the top frame; iframe forms and protected Firefox
 pages are not supported. These limits are reported rather than bypassed.
 

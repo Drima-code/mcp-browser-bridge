@@ -23,10 +23,89 @@
     }
     return `html > ${parts.join(" > ")}`;
   }
+  const uploads = new Map();
+  const maxUploadBytes = 25 * 1024 * 1024;
+  const maxChunkBytes = 96 * 1024;
+  const uploadVisible = e => visible(e) || Array.from(e.labels || []).some(visible);
+  function fileTarget(target) {
+    const elements = Array.from(document.querySelectorAll(target));
+    if (elements.length !== 1) throw new Error(`Expected exactly one file input; got ${elements.length}`);
+    const e = elements[0];
+    if (!e.matches('input[type="file"]') || !uploadVisible(e) || sensitive(e) || disabled(e) || e.webkitdirectory)
+      throw new Error("Expected an enabled file input with a visible control or label");
+    return e;
+  }
+  function validateFiles(e, files) {
+    if (!Array.isArray(files) || files.length < 1 || files.length > 10 || (!e.multiple && files.length > 1))
+      throw new Error("Invalid file count for this input");
+    let total = 0;
+    const accepts = e.accept.toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+    for (const file of files) {
+      if (typeof file.name !== "string" || !file.name || file.name.length > 255 || /[/\\\x00-\x1f]/.test(file.name) ||
+          !Number.isSafeInteger(file.size) || file.size < 0 || typeof file.type !== "string" || file.type.length > 255 ||
+          !Number.isSafeInteger(file.last_modified) || file.last_modified < 0)
+        throw new Error("Invalid file metadata");
+      total += file.size;
+      if (total > maxUploadBytes) throw new Error("Upload exceeds the 25 MiB total limit");
+      if (accepts.length && !accepts.some(a => a.startsWith('.') ? file.name.toLowerCase().endsWith(a) :
+        a.endsWith('/*') ? file.type.toLowerCase().startsWith(a.slice(0,-1)) : file.type.toLowerCase() === a))
+        throw new Error("File type does not match the input's accept filter");
+    }
+  }
+  function upload(request) {
+    for (const [id, state] of uploads) if (Date.now() - state.created > 300000) uploads.delete(id);
+    if (request.op === "upload_begin") {
+      if (uploads.size) throw new Error("Another upload is staged in this tab; abort it or wait for expiry");
+      const element = fileTarget(request.selector);
+      validateFiles(element, request.files);
+      const id = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8,"0")).join("");
+      uploads.set(id, {element, selector:request.selector, url:location.href, created:Date.now(),
+        files:request.files.map(meta => ({...meta, chunks:[], received:0}))});
+      return {upload_id:id, notice:"Staging only; no files attached yet"};
+    }
+    if (request.op === "upload_abort") {
+      uploads.delete(request.upload_id);
+      return {aborted:true};
+    }
+    const state = uploads.get(request.upload_id);
+    if (!state) throw new Error("Upload expired or document changed; inspect before retrying");
+    if (state.url !== location.href || !state.element.isConnected || fileTarget(state.selector) !== state.element)
+      throw new Error("Upload target changed; no attachment attempted");
+    if (request.op === "upload_chunk") {
+      if (!Number.isInteger(request.file_index) || request.file_index < 0 || request.file_index >= state.files.length)
+        throw new Error("Invalid upload file index");
+      const file = state.files[request.file_index];
+      if (request.offset !== file.received || typeof request.data !== "string" || !request.data.length ||
+          request.data.length > 4 * Math.ceil(maxChunkBytes / 3))
+        throw new Error("Invalid or duplicate upload chunk");
+      const decoded = atob(request.data);
+      if (!decoded.length || decoded.length > maxChunkBytes || file.received + decoded.length > file.size)
+        throw new Error("Upload chunk exceeds declared size");
+      file.chunks.push(Uint8Array.from(decoded, c => c.charCodeAt(0)));
+      file.received += decoded.length;
+      return {received:file.received};
+    }
+    if (request.op !== "upload_commit") throw new Error("Unsupported upload operation");
+    validateFiles(state.element, state.files);
+    if (state.files.some(f => f.received !== f.size)) throw new Error("Upload incomplete; no attachment attempted");
+    const transfer = new DataTransfer();
+    for (const file of state.files)
+      transfer.items.add(new File(file.chunks, file.name, {type:file.type, lastModified:file.last_modified}));
+    // Delete before the only form mutation. A lost reply must not replay it.
+    uploads.delete(request.upload_id);
+    state.element.files = transfer.files;
+    const selected = Array.from(state.element.files).map(f => ({name:f.name,size:f.size,type:f.type}));
+    if (selected.length !== state.files.length || selected.some((f,i) => f.name !== state.files[i].name || f.size !== state.files[i].size))
+      throw new Error("File selection failed; inspect before retrying");
+    state.element.dispatchEvent(new Event("input", {bubbles:true}));
+    state.element.dispatchEvent(new Event("change", {bubbles:true}));
+    return {selected, notice:"Files selected once; the site may upload immediately. Inspect page validation and receipt. No automatic retry."};
+  }
+  window.addEventListener("pagehide", () => uploads.clear());
   function snapshot(maxChars) {
     const candidates = Array.from(document.querySelectorAll(
       'input,textarea,select,button,a,label,[contenteditable=true],[role=button],[role=checkbox],[role=radio],[role=combobox],[role=option]'
-    )).filter(e => visible(e) && !sensitive(e));
+    )).filter(e => (visible(e) || (e.type === "file" && uploadVisible(e))) && !sensitive(e));
     let controls = candidates.slice(0,100).map(e => ({
       selector: selector(e), tag: e.tagName.toLowerCase(), id: e.id.slice(0,256),
       name: (e.name || "").slice(0,256), type: e.type || "", role: e.getAttribute("role") || "",
@@ -35,6 +114,8 @@
       value_truncated: e.matches("input,textarea,select") && e.type !== "file" && e.value.length > 1024,
       checked: ["checkbox", "radio"].includes(e.type) ? e.checked : e.getAttribute("aria-checked") || undefined,
       required: !!e.required, disabled: disabled(e), readonly: !!e.readOnly,
+      accept: e.type === "file" ? e.accept : undefined,
+      multiple: e.type === "file" ? e.multiple : undefined,
       files: e.type === "file" ? Array.from(e.files).map(f => f.name.slice(0,256)) : undefined,
       options: e.tagName === "SELECT" ? Array.from(e.options).slice(0,50)
         .map(o => ({value:o.value.slice(0,256),text:o.text.slice(0,256),disabled:o.disabled})) : undefined
@@ -96,6 +177,8 @@
     if (request.expected_url && location.href !== request.expected_url)
       throw new Error("Tab navigated; inspect before retrying");
     if (request.op === "snapshot") return Promise.resolve(snapshot(Math.min(15000,Math.max(500,request.max_chars || 8000))));
+    if (["upload_begin", "upload_chunk", "upload_commit", "upload_abort"].includes(request.op))
+      return Promise.resolve(upload(request));
     if (request.op === "act") return Promise.resolve(act(request.action,request.selector,request.value || ""));
     throw new Error("Unsupported operation");
   });

@@ -210,6 +210,10 @@ const ui=r=>events.ui(r,sender);
  await ui({ui:'toggle',tabId:2});
  await listener({id:'other',op:'snapshot',tab_id:'2'});
  assert(messages.at(-1).result.ok);
+ await listener({id:'upload-allowed',op:'upload_begin',tab_id:'2'});
+ assert(messages.at(-1).result.ok);
+ await listener({id:'upload-blocked',op:'upload_commit',tab_id:'1'});
+ assert(messages.at(-1).error.includes('not approved'));
  granted=true;
  await ui({ui:'all',confirmed:true});
  await listener({id:'all',op:'tabs'});
@@ -356,3 +360,128 @@ async def test_snapshot_stays_within_native_message_limit():
         assert result["controls_truncated"]
         assert len(json.dumps({"result": result}, ensure_ascii=True).encode()) < 256 * 1024
         await browser.close()
+
+
+async def test_chunked_upload_to_real_firefox_file_input(tmp_path, monkeypatch):
+    import base64
+    import hashlib
+
+    data = bytes(range(256)) * 1000
+    path = tmp_path / 'résumé.pdf'
+    path.write_bytes(data)
+    script = (Path(__file__).resolve().parents[1] / 'extension/content.js').read_text()
+    calls = []
+    async with async_playwright() as playwright:
+        browser = await playwright.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.route('http://127.0.0.1/**', lambda route: route.fulfill(
+            body='<label for="cv">CV</label><input id="cv" type="file" accept=".pdf" hidden>', content_type='text/html'))
+        await page.goto('http://127.0.0.1/upload')
+        await page.evaluate('''() => {
+          window.browser={runtime:{onMessage:{addListener:fn=>window.handler=fn}}};
+          window.changes=0; window.inputs=0;
+          document.querySelector('#cv').addEventListener('input',()=>window.inputs++);
+          document.querySelector('#cv').addEventListener('change',()=>window.changes++);
+        }''')
+        await page.evaluate(script)
+        async def bridge(payload):
+            calls.append(payload)
+            assert len(json.dumps(payload).encode()) < 256 * 1024
+            return await page.evaluate('r=>handler({drima:true,...r})', payload)
+        monkeypatch.setattr(regular, 'request', bridge)
+        result = await regular.upload('7', '#cv', [str(path)])
+        assert result['selected'] == [{'name': 'résumé.pdf', 'size': len(data), 'type': 'application/pdf'}]
+        assert sum(c['op'] == 'upload_commit' for c in calls) == 1
+        assert sum(c['op'] == 'upload_chunk' for c in calls) == 3
+        assert all('paths' not in c and str(tmp_path) not in json.dumps(c) for c in calls)
+        uploaded = await page.evaluate('''async () => {
+          const f=document.querySelector('#cv').files[0];
+          const hash=await crypto.subtle.digest('SHA-256',await f.arrayBuffer());
+          return Array.from(new Uint8Array(hash), b=>b.toString(16).padStart(2,'0')).join('');
+        }''')
+        assert uploaded == hashlib.sha256(data).hexdigest()
+        assert await page.evaluate('({changes,inputs})') == {'changes': 1, 'inputs': 1}
+        snap = await page.evaluate("handler({drima:true,op:'snapshot'})")
+        file_control = next(c for c in snap['controls'] if c['type'] == 'file')
+        assert file_control['selector'] == '#cv'
+        assert file_control['files'] == ['résumé.pdf']
+        assert file_control['accept'] == '.pdf'
+        with pytest.raises(Exception, match='expired'):
+            await bridge({'op': 'upload_commit', 'upload_id': next(c['upload_id'] for c in calls if c['op'] == 'upload_commit')})
+        assert await page.evaluate('changes') == 1
+        # A staged upload cannot be duplicated, committed early or redirected.
+        meta = {'name': 'a.pdf', 'size': 2, 'type': 'application/pdf', 'last_modified': 0}
+        staged = await bridge({'op': 'upload_begin', 'selector': '#cv', 'files': [meta]})
+        ctx = {'upload_id': staged['upload_id']}
+        with pytest.raises(Exception, match='incomplete'):
+            await bridge({'op': 'upload_commit', **ctx})
+        chunk = {'op': 'upload_chunk', **ctx, 'file_index': 0, 'offset': 0,
+                 'data': base64.b64encode(b'hi').decode()}
+        await bridge(chunk)
+        with pytest.raises(Exception, match='duplicate'):
+            await bridge(chunk)
+        await page.evaluate("document.querySelector('#cv').replaceWith(document.querySelector('#cv').cloneNode())")
+        with pytest.raises(Exception, match='target changed'):
+            await bridge({'op': 'upload_commit', **ctx})
+        await bridge({'op': 'upload_abort', **ctx})
+        assert await page.evaluate('changes') == 1
+        for selector, files, error in [
+            ('#cv', [{**meta, 'name': 'a.exe', 'type': 'application/octet-stream'}], 'accept'),
+            ('#cv', [meta, meta], 'file count'),
+            ('#cv', [{**meta, 'size': 26*1024*1024}], 'limit'),
+            ('#cv', [{**meta, 'name': '../a.pdf'}], 'metadata'),
+        ]:
+            if error:
+                with pytest.raises(Exception, match=error):
+                    await bridge({'op':'upload_begin','selector':selector,'files':files})
+        await page.evaluate("document.querySelector('#cv').disabled=true")
+        with pytest.raises(Exception, match='enabled file input'):
+            await bridge({'op':'upload_begin','selector':'#cv','files':[meta]})
+        # Multiple files, including an empty file, use one selection event.
+        await page.set_content('<label for="many">Files</label><input id="many" type="file" multiple accept=".pdf,text/plain" hidden>')
+        first = await bridge({'op':'upload_begin','selector':'#many','files':[
+            {**meta,'size':0}, {**meta,'name':'b.txt','type':'text/plain'}]})
+        ctx = {'upload_id': first['upload_id']}
+        await bridge({'op':'upload_chunk',**ctx,'file_index':1,'offset':0,
+                      'data':base64.b64encode(b'hi').decode()})
+        result = await bridge({'op':'upload_commit',**ctx})
+        assert [f['size'] for f in result['selected']] == [0,2]
+        await browser.close()
+
+
+async def test_upload_path_limits_and_unknown_commit(tmp_path, monkeypatch):
+    file = tmp_path / 'cv.pdf'
+    file.write_bytes(b'%PDF-synthetic')
+    calls = []
+    async def fake(payload):
+        calls.append(payload)
+        if payload['op'] == 'upload_begin':
+            return {'upload_id': 'test'}
+        if payload['op'] == 'upload_commit':
+            raise TimeoutError('unknown upload outcome')
+        return {}
+    monkeypatch.setattr(regular, 'request', fake)
+    for paths in ([], ['relative.pdf'], [str(tmp_path)], [str(file)]*11):
+        with pytest.raises((ValueError, OSError)):
+            await regular.upload('7', '#cv', paths)
+    assert not calls
+    large = tmp_path / 'large.pdf'
+    with large.open('wb') as stream:
+        stream.truncate(26 * 1024 * 1024)
+    with pytest.raises(ValueError, match='25 MiB'):
+        await regular.upload('7', '#cv', [str(large)])
+    assert not calls
+    fifo = tmp_path / 'pipe'
+    os.mkfifo(fifo)
+    with pytest.raises(ValueError, match='regular files'):
+        await regular.upload('7', '#cv', [str(fifo)])
+    with pytest.raises(TimeoutError, match='unknown'):
+        await regular.upload('7', '#cv', [str(file)])
+    assert [c['op'] for c in calls] == ['upload_begin', 'upload_chunk', 'upload_commit', 'upload_abort']
+
+
+async def test_upload_tool_is_discoverable():
+    server = regular.create_regular_server()
+    tools = await server.list_tools()
+    tool = next(t for t in tools if t.name == 'regular_browser_upload')
+    assert set(tool.input_schema['required']) == {'tab_id', 'selector', 'paths'}

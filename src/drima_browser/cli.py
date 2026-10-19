@@ -116,7 +116,7 @@ def main():
     sub.add_parser("stdio")
     sub.add_parser("regular-stdio")
     regular_call = sub.add_parser("regular-call")
-    regular_call.add_argument("operation", choices=["tabs", "snapshot", "act"])
+    regular_call.add_argument("operation", choices=["tabs", "snapshot", "act", "upload"])
     regular_call.add_argument("arguments", nargs="?", default="{}")
     call_parser = sub.add_parser("call")
     call_parser.add_argument("tool")
@@ -139,17 +139,19 @@ def main():
 
         create_regular_server().run()
     elif args.command == "regular-call":
-        from drima_browser.regular import request
+        from drima_browser.regular import request, upload
 
         try:
             print(
                 json.dumps(
                     asyncio.run(
-                        request({**json.loads(args.arguments), "op": args.operation})
+                        upload(**json.loads(args.arguments))
+                        if args.operation == "upload"
+                        else request({**json.loads(args.arguments), "op": args.operation})
                     )
                 )
             )
-        except (RuntimeError, TimeoutError, OSError) as exc:
+        except (RuntimeError, TimeoutError, OSError, ValueError) as exc:
             parser.exit(1, f"{exc}\n")
     elif args.command == "stdio":
         asyncio.run(proxy(args))

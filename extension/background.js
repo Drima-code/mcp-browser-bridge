@@ -35,7 +35,7 @@ async function dispatch(request) {
   const id = Number(request.tab_id);
   const tab = await browser.tabs.get(id);
   if (!await allowed(tab)) throw new Error("Tab not approved. Use the extension popup to grant access.");
-  if (!["snapshot", "act"].includes(request.op)) throw new Error("Unsupported operation");
+  if (!["snapshot", "act", "upload_begin", "upload_chunk", "upload_commit", "upload_abort"].includes(request.op)) throw new Error("Unsupported operation");
   // Content code is packaged and fixed; requests are data, never executable JS.
   await browser.tabs.executeScript(id, {file: "content.js"});
   const current = await browser.tabs.get(id);

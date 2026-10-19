@@ -145,6 +145,7 @@ solver, OAuth bypass, or claim of complete Blueprint feature parity.
 ```bash
 uv run --frozen pytest -q
 uv run --frozen python scripts/smoke_transport.py
+uv run --frozen python scripts/smoke_regular_upload.py
 uv run --frozen ruff check src tests scripts
 ```
 
@@ -231,9 +232,31 @@ blocked. Snapshots include strict CSS selectors, current checkbox state and atta
 Actions reject read-only/disabled controls and report failed value changes.
 The popup includes **Reconnect native host** for dropped connections without
 replaying website actions. No arbitrary JS evaluation, network interception or
-automatic retries. Upload files manually in normal Firefox for now. User handles
-login/CAPTCHA/assessments. Version 0.2.1 passes synthetic regression tests and Mozilla web-ext lint.
-Signed installation and real optional-permission prompting still need verification.
+automatic retries. Version 0.2.2 adds **regular_browser_upload** for explicit
+absolute local paths: up to 10 files and 25 MiB combined. Files are sent in bounded
+chunks; only the final commit attaches them and triggers the site's upload events.
+Only filenames and file contents reach the approved tab; local paths stay local.
+The input's type filter, disabled state and multi-file setting are checked. Visible
+inputs and hidden inputs with visible associated labels are supported. Snapshots
+include their selectors, accepted types and selected filenames.
+
+```bash
+uv run --frozen drima-browser regular-call upload \
+  '{"tab_id":"APPROVED_ID","selector":"#resume","paths":["/absolute/path/resume.pdf"]}'
+```
+
+Attach only files the user has authorized for that site. Selection can start an
+upload immediately; it does not prove the employer accepted the application.
+Inspect filenames and page validation before submitting. A timeout or navigation
+change must be inspected before any retry. No directory uploads or file-picker
+automation. Iframe uploads and sites requiring trusted picker events remain manual.
+The user still handles login/CAPTCHA/assessments.
+
+Install the Mozilla-signed **0.2.2** update with the same extension ID. The local
+Python code is available immediately through the diagnostic CLI above; reconnect
+Codex's regular MCP server if its tool list still lacks `regular_browser_upload`.
+The installed-extension smoke test uses a disposable Firefox profile and a local
+synthetic form; it never touches user accounts or real applications.
 
 Linux only: native host uses a mode-0600 Unix socket inside a mode-0700 user-owned
 directory. It is a trusted-user local bridge, not isolation from same-user malware.

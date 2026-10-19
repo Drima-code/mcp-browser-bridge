@@ -21,6 +21,17 @@ page text. Requested form actions and their results also pass through
 the bridge. Approving a tab permits the connected client to read and interact with
 that tab; it is not a read-only permission.
 
+When the local MCP client explicitly requests a file upload, the companion reads
+only the named absolute local files and sends their bytes and base filenames in
+bounded chunks to the approved tab. Absolute paths are not sent to the extension
+or website. The bridge keeps staged bytes in memory until attachment, cancellation,
+page navigation or five-minute expiry (cleaned up on the next upload operation).
+Selecting files fires the website's normal upload events, which may immediately
+send those files to the website's server. File contents may include any personal
+data categories disclosed above. The extension does not browse local directories,
+choose files autonomously or provide website scripts with filesystem access.
+Only the trusted local MCP client names the files; a web page cannot request them.
+
 The extension has no analytics or external network endpoint. It does not read
 cookies or browser storage. Snapshots exclude password inputs, hidden inputs and
 controls identified as token, secret or verification-code fields. This filtering

@@ -1,5 +1,24 @@
 # Status — 2026-10-05
 
+## Normal Firefox file upload — 2026-10-19
+
+Implemented 0.2.2 upload through `regular_browser_upload` and diagnostic
+`regular-call upload`. Explicit absolute regular-file paths only; max 10 files,
+25 MiB combined. Native messages stay within 256 KiB using 96 KiB binary chunks.
+Filename/MIME metadata only, never absolute paths, reaches the approved tab.
+Every stage rechecks website authorization and document/target identity. Type,
+multiple/disabled/directory inputs and incomplete/duplicate chunks are checked.
+Only commit assigns FileList and emits input/change once; never replayed after a
+lost reply. Hidden file inputs require visible associated labels. Iframes remain
+unsupported. Privacy/popup disclosure and signing guide updated; no new permissions.
+
+31 tests pass, plus a disposable installed-Firefox-extension smoke test validating
+256,000 binary bytes by SHA256, one input/change event, and replay rejection.
+Ruff/JavaScript syntax and existing native/authenticated transport smoke pass;
+Mozilla lint reports no errors, warnings or notices. Python CLI is ready locally.
+The user must sign/install 0.2.2 before normal Firefox gains upload support; no
+signing or live application upload claimed. Refresh MCP discovery for the new tool,
+or use the documented diagnostic CLI with the same checks.
 ## Regular Firefox release review — 2026-10-19
 
 Prepared version 0.2.1 for Mozilla signing; no signed/installed release claimed.
