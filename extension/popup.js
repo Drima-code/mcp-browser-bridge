@@ -2,13 +2,19 @@ const $ = id => document.getElementById(id);
 const allSites = {origins: ["http://*/*", "https://*/*"]};
 let state;
 async function render() {
+  $("error").textContent = "";
   state = await browser.runtime.sendMessage({ui: "state"});
   $("status").textContent = `Mode: ${state.mode === "all" ? "automatic (all website tabs)" : "manual approval"}. Native host: ${state.connected ? "connected" : "not connected"}.`;
+  $("reconnect").disabled = state.connected;
   $("toggle").disabled = state.mode !== "manual" || !state.eligible;
   $("toggle").textContent = state.approved ? "Revoke this tab" : "Approve this tab";
   $("all").disabled = state.mode === "all" || !$("consent").checked;
 }
 function fail(error) { $("error").textContent = error.message; }
+$("reconnect").addEventListener("click", async () => {
+  try { await browser.runtime.sendMessage({ui: "reconnect"}); await render(); }
+  catch (error) { fail(error); }
+});
 $("consent").addEventListener("change", () => {
   $("all").disabled = !$("consent").checked || state?.mode === "all";
 });

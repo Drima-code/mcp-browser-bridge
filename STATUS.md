@@ -1,5 +1,31 @@
 # Status — 2026-10-05
 
+## Regular Firefox release review — 2026-10-19
+
+Prepared version 0.2.1 for Mozilla signing; no signed/installed release claimed.
+Preserved and tested existing uncommitted rich-editor fix. Added snapshot CSS
+selectors, widget labels/roles, state/filename metadata and bounded native replies.
+Actions reject read-only, disabled, sensitive-label and disabled-option targets;
+failed value/checkbox changes report errors. Navigation is rechecked in content
+before actions. Popup reconnect restores native connection without retrying actions
+or changing access grants. Manual/automatic consent boundaries remain intact.
+
+28 tests pass, including reconnect, custom controls, controlled inputs, navigation
+races, native framing and oversized snapshots. JavaScript syntax and Ruff pass.
+Mozilla web-ext lint: zero errors, warnings or notices. Firefox minimum 142 avoids
+Mozilla's cross-platform data-disclosure schema warning; Linux native host only.
+Reproducible unsigned package in ignored artifacts/; PERMANENT_INSTALL.md provides
+unlisted signing, same-ID updates, native-host and normal-Firefox MCP instructions.
+Signing/download/install require the user's Mozilla/browser interaction.
+## Rich-text fix — 2026-10-07
+
+Live read-back exposed contenteditable DOM rewrites not updating an editor model.
+Use Firefox's insertText/delete editing pipeline, retaining strict visible matching
+and single-shot behavior, with no direct DOM fallback. Synthetic Firefox test
+checks InputEvent-backed model updates, replacement, literal text and clearing.
+Seven connector tests pass; Ruff and diff checks pass. Loaded temporary extension
+must be reloaded before live verification; application remains unsubmitted.
+
 ## Access mode choices — 2026-10-07
 
 Version 0.2.0 removes job-site allowlisting and supports manual per-tab approval

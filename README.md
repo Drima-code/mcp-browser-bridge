@@ -179,12 +179,14 @@ See [Google's supported-browser guidance](https://support.google.com/accounts/an
 
 The Firefox extension is named **MCP Browser Bridge**. Its source is in
 `extension/` and is distributed under this repository's MIT license. It requires
-Firefox 140+ for built-in data-transfer consent. See [privacy notice](PRIVACY.md):
+Firefox 142+ for built-in data-transfer consent. See [privacy notice](PRIVACY.md):
 approved page content goes to your local MCP client, which may send it to its AI
 provider depending on that client's configuration.
 It also requires
 the local native host below; installing the extension alone is not sufficient.
-For permanent installation, submit its package to Mozilla for signing and install
+For permanent installation, follow [the signing and install guide](PERMANENT_INSTALL.md).
+Build an upload ZIP with `uv run --frozen python scripts/package_extension.py`,
+get it signed by Mozilla (unlisted/self-distribution is sufficient), then install
 the signed XPI through `about:addons`. A public store listing is being prepared;
 no approved Mozilla listing is claimed yet.
 
@@ -225,10 +227,13 @@ uv run --frozen drima-browser regular-call snapshot '{"tab_id":"APPROVED_ID"}'
 
 Available tools: approved-tab listing, bounded top-frame snapshots and single
 strict-selector click/fill/select/check/uncheck actions. Password/token controls
-blocked. No arbitrary JS evaluation, network interception or
+blocked. Snapshots include strict CSS selectors, current checkbox state and attached filenames.
+Actions reject read-only/disabled controls and report failed value changes.
+The popup includes **Reconnect native host** for dropped connections without
+replaying website actions. No arbitrary JS evaluation, network interception or
 automatic retries. Upload files manually in normal Firefox for now. User handles
-login/CAPTCHA/assessments. Mode controls are synthetic-tested; live installation
-of version 0.2.0 and real optional-permission prompting still need verification.
+login/CAPTCHA/assessments. Version 0.2.1 passes synthetic regression tests and Mozilla web-ext lint.
+Signed installation and real optional-permission prompting still need verification.
 
 Linux only: native host uses a mode-0600 Unix socket inside a mode-0700 user-owned
 directory. It is a trusted-user local bridge, not isolation from same-user malware.

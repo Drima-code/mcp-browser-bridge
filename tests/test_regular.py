@@ -115,7 +115,8 @@ async def test_content_controls_and_no_duplicate_submission():
         await page.set_content("""<title>Synthetic connector test</title>
           <label>Name<input id="name"></label><input id="password" type="password" value="do-not-expose">
           <input id="token" type="hidden" value="private"><button id="send" onclick="window.sent=(window.sent||0)+1">Send</button>
-          <button class="duplicate">Duplicate</button><button class="duplicate">Duplicate</button>""")
+          <button class="duplicate">Duplicate</button><button class="duplicate">Duplicate</button>
+          <div id="editor" contenteditable="true">Old text</div>""")
         await page.evaluate(
             "window.browser={runtime:{onMessage:{addListener:fn=>window.handler=fn}}}"
         )
@@ -129,6 +130,19 @@ async def test_content_controls_and_no_duplicate_submission():
             "handler({drima:true,op:'act',action:'fill',selector:'#name',value:'Alex Sample'})"
         )
         assert await page.locator("#name").input_value() == "Alex Sample"
+        await page.evaluate("""document.querySelector('#editor').addEventListener('input', e => {
+          if (e instanceof InputEvent) window.editorModel=e.target.textContent;
+        })""")
+        await page.evaluate(
+            "handler({drima:true,op:'act',action:'fill',selector:'#editor',value:'Texto español <literal>'})"
+        )
+        assert await page.locator("#editor").text_content() == "Texto español <literal>"
+        assert await page.evaluate("window.editorModel") == "Texto español <literal>"
+        await page.evaluate(
+            "handler({drima:true,op:'act',action:'fill',selector:'#editor',value:''})"
+        )
+        assert await page.locator("#editor").text_content() == ""
+        assert await page.evaluate("window.editorModel") == ""
         with pytest.raises(Exception, match="Sensitive"):
             await page.evaluate(
                 "handler({drima:true,op:'act',action:'fill',selector:'#password',value:'x'})"
@@ -152,7 +166,7 @@ def test_background_permissions_and_origin_revocation():
     harness = r"""
 const vm=require('vm'), fs=require('fs'), assert=require('assert');
 const events={}, messages=[];
-let listener, granted=false, active=1, settings={};
+let listener, granted=false, active=1, settings={}, connections=0;
 const tabs=new Map([[1,{id:1,title:'Job',url:'https://wellfound.com/jobs/1?private=omit'}],
  [2,{id:2,title:'Other',url:'https://example.com/'}],
  [3,{id:3,title:'Private',url:'https://private.example/',incognito:true}],
@@ -162,7 +176,7 @@ const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconne
 const browser={tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},sendMessage:async()=>({ok:true}),
  query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),
  onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
+ runtime:{id:'bridge',getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
  permissions:{contains:async()=>granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>settings,set:async s=>{settings={...settings,...s}}}},
  browserAction:{setBadgeText:async()=>{}}};
@@ -177,6 +191,14 @@ const ui=r=>events.ui(r,sender);
  await listener({id:'list',op:'tabs'});
  assert.equal(messages.at(-1).result.tabs.length,1);
  assert.equal(messages.at(-1).result.tabs[0].url,'https://wellfound.com/jobs/1');
+ const initialConnections=connections;
+ events.disconnect();
+ assert.equal((await ui({ui:'state'})).connected,false);
+ await ui({ui:'reconnect'});
+ assert.equal(connections,initialConnections+1);
+ assert.equal((await ui({ui:'state'})).approved,true);
+ await ui({ui:'reconnect'});
+ assert.equal(connections,initialConnections+1);
  await listener({id:'blocked',op:'snapshot',tab_id:'2'});
  assert(messages.at(-1).error.includes('not approved'));
  tabs.get(1).url='https://accounts.google.com/login';
@@ -262,4 +284,75 @@ async def test_popup_explicit_consent_denial_and_stop():
         await page.wait_for_function("state.mode==='manual' && requests.includes('remove')")
         assert not await page.locator("#consent").is_checked()
         assert await page.locator("#all").is_disabled()
+        await browser.close()
+
+
+async def test_form_widgets_selectors_and_failed_state_changes():
+    """Exercise custom widgets, controlled forms and navigation without real accounts."""
+    script = (Path(__file__).resolve().parents[1] / "extension/content.js").read_text()
+    async with async_playwright() as playwright:
+        browser = await playwright.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content('''<label for="custom">Agree</label>
+          <input id="custom" type="checkbox" style="display:none">
+          <input id="locked" readonly value="original">
+          <fieldset disabled><button id="disabled">Disabled</button></fieldset>
+          <label for="password">Password</label><input id="password" type="password">
+          <input type="radio" id="radio" checked>
+          <input id="controlled" oninput="this.value='original'" value="original">
+          <input id="cancelled" type="checkbox" onclick="event.preventDefault()">
+          <button aria-disabled="true" id="ariaDisabled">Unavailable</button>
+          <button onclick="window.sends=(window.sends||0)+1">Send once</button>
+          <select id="choice"><option value="a">A</option>
+            <optgroup disabled><option value="b">B</option></optgroup>
+            <option value="c">C</option></select>''')
+        await page.evaluate("window.browser={runtime:{onMessage:{addListener:fn=>window.handler=fn}}}")
+        await page.evaluate(script)
+        snapshot = await page.evaluate("handler({drima:true,op:'snapshot'})")
+        for control in snapshot["controls"]:
+            assert await page.locator(control["selector"]).count() == 1
+        agree = next(c for c in snapshot["controls"] if c["label"] == "Agree")
+        await page.evaluate("s=>handler({drima:true,op:'act',action:'click',selector:s})", agree["selector"])
+        assert await page.locator("#custom").is_checked()
+        for action, selector, value, error in [
+            ("fill", "#locked", "changed", "Read-only"),
+            ("click", "#disabled", "", "disabled"),
+            ("click", "label[for=password]", "", "Sensitive"),
+            ("click", "#ariaDisabled", "", "disabled"),
+            ("uncheck", "#radio", "", "another radio"),
+            ("fill", "#controlled", "changed", "retain"),
+            ("check", "#cancelled", "", "state did not change"),
+            ("select", "#choice", "b", "Invalid select"),
+        ]:
+            with pytest.raises(Exception, match=error):
+                await page.evaluate("r=>handler({drima:true,op:'act',...r})", {
+                    "action": action, "selector": selector, "value": value})
+        send = next(c for c in snapshot["controls"] if c["label"] == "Send once")
+        with pytest.raises(Exception, match="navigated"):
+            await page.evaluate("s=>handler({drima:true,op:'act',action:'click',selector:s,expected_url:'https://old.example/'})", send["selector"])
+        assert await page.evaluate("window.sends||0") == 0
+        await page.evaluate("s=>handler({drima:true,op:'act',action:'click',selector:s})", send["selector"])
+        assert await page.evaluate("window.sends") == 1
+        await browser.close()
+
+
+async def test_snapshot_stays_within_native_message_limit():
+    script = (Path(__file__).resolve().parents[1] / "extension/content.js").read_text()
+    async with async_playwright() as playwright:
+        browser = await playwright.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content('<body>')
+        await page.evaluate('''() => {
+          for (let i=0;i<110;i++) {
+            const s=document.createElement('select');
+            for(let j=0;j<60;j++) s.add(new Option('界'.repeat(500),'v'.repeat(500)+j));
+            document.body.append(s);
+          }
+          window.browser={runtime:{onMessage:{addListener:fn=>window.handler=fn}}};
+        }''')
+        await page.evaluate(script)
+        result = await page.evaluate("handler({drima:true,op:'snapshot',max_chars:15000})")
+        assert result["controls"]
+        assert result["controls_truncated"]
+        assert len(json.dumps({"result": result}, ensure_ascii=True).encode()) < 256 * 1024
         await browser.close()

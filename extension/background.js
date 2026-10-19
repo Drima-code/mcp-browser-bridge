@@ -40,7 +40,7 @@ async function dispatch(request) {
   await browser.tabs.executeScript(id, {file: "content.js"});
   const current = await browser.tabs.get(id);
   if (current.url !== tab.url || !await allowed(current)) throw new Error("Tab changed; inspect before retrying.");
-  return browser.tabs.sendMessage(id, {drima: true, ...request});
+  return browser.tabs.sendMessage(id, {...request, drima: true, expected_url: current.url});
 }
 function connect() {
   if (port) return;
@@ -80,6 +80,11 @@ browser.runtime.onMessage.addListener(async (request, sender) => {
     const [tab] = await browser.tabs.query({active: true, currentWindow: true});
     return {mode, connected: !!port, eligible: !!tab && eligible(tab),
       approved: !!tab && eligible(tab) && approved.get(tab.id) === origin(tab.url), tabId: tab?.id};
+  }
+  if (request.ui === "reconnect") {
+    connect();
+    await refreshBadge();
+    return {ok: true};
   }
   if (request.ui === "manual") { await manualMode(); return {ok: true}; }
   if (request.ui === "all") {
