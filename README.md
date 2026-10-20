@@ -230,6 +230,15 @@ Available tools: approved-tab listing, bounded top-frame snapshots and single
 strict-selector click/fill/select/check/uncheck actions. Password/token controls
 blocked. Snapshots include strict CSS selectors, current checkbox state and attached filenames.
 Actions reject read-only/disabled controls and report failed value changes.
+Version 0.2.3 fixes custom dropdowns that open on mouse-down rather than click.
+The `click` action sends pointer/mouse down and up events, respects cancelled
+focus defaults, and activates the target once. If a handler removes, disables,
+or navigates away from the target, it stops and reports an uncertain outcome.
+Snapshots expose `expanded`, `selected`, `aria_controls`, and ARIA-required state
+so an agent can open a combobox, inspect its visible options, click one, and verify
+selection. Typing “Yes” into a combobox does not select that option. Native
+`select` remains for visible HTML select elements only. These are synthetic
+events; sites requiring trusted native input still need manual interaction.
 The popup includes **Reconnect native host** for dropped connections without
 replaying website actions. No arbitrary JS evaluation, network interception or
 automatic retries. Version 0.2.2 adds **regular_browser_upload** for explicit
@@ -252,11 +261,13 @@ change must be inspected before any retry. No directory uploads or file-picker
 automation. Iframe uploads and sites requiring trusted picker events remain manual.
 The user still handles login/CAPTCHA/assessments.
 
-Install the Mozilla-signed **0.2.2** update with the same extension ID. The local
+Install the Mozilla-signed **0.2.3** update with the same extension ID. The local
 Python code is available immediately through the diagnostic CLI above; reconnect
 Codex's regular MCP server if its tool list still lacks `regular_browser_upload`.
 The installed-extension smoke test uses a disposable Firefox profile and a local
-synthetic form; it never touches user accounts or real applications.
+synthetic form; it checks file uploads, a mouse-down-driven custom dropdown,
+and exactly one synthetic form submission. It never touches user accounts or
+real applications.
 
 Linux only: native host uses a mode-0600 Unix socket inside a mode-0700 user-owned
 directory. It is a trusted-user local bridge, not isolation from same-user malware.

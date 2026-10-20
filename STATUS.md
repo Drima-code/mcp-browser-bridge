@@ -1,5 +1,31 @@
 # Status — 2026-10-05
 
+## Custom dropdown fix — 2026-10-20
+
+Prepared extension 0.2.3. Normal Firefox's `.click()`-only activation skipped
+mouse-down handlers, so Greenhouse/React Select's Latin America field contained
+typed “Yes” without a selected value and failed required-field validation.
+Clicks now dispatch pointer/mouse down/up, honor cancellation of compatibility
+mouse events and focus defaults, then activate exactly once. A target removed,
+disabled, hidden, made sensitive or navigated away during those handlers stops
+before activation, reports failure, and is never retried automatically.
+Snapshots include ARIA-required, expanded, selected and controlled-list metadata.
+Strict matching and existing permissions remain unchanged; synthetic events
+do not bypass sites requiring trusted native input.
+
+Validation: **36 tests passed**, including a regression that distinguishes typed
+combobox text from selected state, focus preservation, pointer cancellation,
+target changes and exactly one form activation. Installed-extension smoke in a
+disposable Firefox profile passed custom dropdown selection and one synthetic
+submission alongside binary upload SHA256/event/replay checks. Ruff, JavaScript
+syntax, diff check and Mozilla lint passed (zero errors/warnings/notices).
+
+Unsigned package: `artifacts/mcp-browser-bridge-0.2.3.zip`. Needs Mozilla signing
+as a new version of the same extension ID, then installation in normal Firefox.
+No signed update or live Cresteo fix is claimed yet. User specifically wants
+normal Firefox tab 38; its current CV/contacts are filled, but LATAM dropdown
+selection is pending. No live application was submitted as a regression test.
+
 ## Normal Firefox file upload — 2026-10-19
 
 Implemented 0.2.2 upload through `regular_browser_upload` and diagnostic

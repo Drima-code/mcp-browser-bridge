@@ -1,4 +1,4 @@
-"""Verify uploads through an installed Firefox extension on a synthetic local form.
+"""Verify uploads and custom dropdowns through an installed Firefox extension.
 
 Uses a disposable web-ext Firefox profile, never the user's browser or accounts.
 Requires node/npm (web-ext) and Firefox. No real application is submitted.
@@ -20,7 +20,7 @@ from pathlib import Path
 def main():
     root = Path(__file__).resolve().parents[1]
     expected = bytes(range(256)) * 1000
-    done, events, reports = threading.Event(), [], []
+    done, events, reports, click_events = threading.Event(), [], [], []
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -29,7 +29,29 @@ def main():
         def do_GET(self):
             body = b'''<!doctype html><label for="cv">CV</label>
               <input id="cv" type="file" accept=".pdf" hidden>
+              <form id="application"><label for="region">Region</label>
+              <div id="widget"><input id="region" role="combobox" aria-required="true"
+                aria-expanded="false" aria-controls="options"></div>
+              <div id="options" role="listbox" hidden>
+                <div id="yes" role="option" aria-selected="false">Yes</div>
+              </div><button id="send">Submit synthetic form</button></form>
               <script>
+              let selected='', clicks=0, submissions=0;
+              const region=document.querySelector('#region'), options=document.querySelector('#options');
+              document.querySelector('#widget').addEventListener('mousedown',e=>{
+                e.preventDefault(); region.focus(); options.hidden=false;
+                region.setAttribute('aria-expanded','true');
+              });
+              options.addEventListener('mousedown',e=>e.preventDefault());
+              options.addEventListener('click',e=>{
+                selected=e.target.textContent; region.value=selected; options.hidden=true;
+                e.target.setAttribute('aria-selected','true'); region.setAttribute('aria-expanded','false');
+              });
+              document.querySelector('#send').addEventListener('click',()=>clicks++);
+              document.querySelector('#application').addEventListener('submit',async e=>{
+                e.preventDefault(); submissions++;
+                await fetch('/click-event',{method:'POST',body:JSON.stringify({selected,clicks,submissions})});
+              });
               let changes=0, inputs=0;
               document.querySelector('#cv').addEventListener('input',()=>inputs++);
               document.querySelector('#cv').addEventListener('change',async e=>{
@@ -50,6 +72,8 @@ def main():
             value = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             if self.path == '/event':
                 events.append(value)
+            elif self.path == '/click-event':
+                click_events.append(value)
             else:
                 reports.append(value)
                 done.set()
@@ -96,6 +120,14 @@ def main():
             let replayRejected=false;
             try { await dispatch({op:'upload_commit',...upload}); }
             catch(error){replayRejected=error.message.includes('expired');}
+            await dispatch({op:'act',...context,action:'click',selector:'#region'});
+            const snapshot=await dispatch({op:'snapshot',...context});
+            const combo=snapshot.controls.find(c=>c.id==='region');
+            if(!combo?.expanded || !combo.required)throw new Error('Combobox did not open');
+            const option=snapshot.controls.find(c=>c.role==='option' && c.label==='Yes');
+            if(!option)throw new Error('Visible option missing from snapshot');
+            await dispatch({op:'act',...context,action:'click',selector:option.selector});
+            await dispatch({op:'act',...context,action:'click',selector:'#send'});
             await new Promise(resolve=>setTimeout(resolve,300));
             await fetch(base+'/report',{method:'POST',body:JSON.stringify({result,replayRejected})});
           } catch(error) {
@@ -119,8 +151,10 @@ def main():
                 assert events == [{'name': 'synthetic.pdf', 'size': len(expected),
                                    'changes': 1, 'inputs': 1,
                                    'hash': hashlib.sha256(expected).hexdigest()}], events
+                assert click_events == [{'selected': 'Yes', 'clicks': 1, 'submissions': 1}], click_events
                 print('PASS: installed Firefox extension, chunked binary upload, exact SHA256, '
-                      'one input/change event, duplicate commit rejected')
+                      'one input/change event, duplicate commit rejected, mousedown dropdown, '
+                      'selected option, exactly one synthetic submission')
             finally:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:

@@ -1,6 +1,6 @@
 # Install MCP Browser Bridge permanently in normal Firefox
 
-Version 0.2.2, Firefox 142+ on Linux. The archive built here is **unsigned**.
+Version 0.2.3, Firefox 142+ on Linux. The archive built here is **unsigned**.
 Normal Firefox installs a permanent copy only after Mozilla signs it. A public
 store listing is optional; self-distribution is sufficient for personal use.
 Do not disable Firefox signature checks or change browser security settings.
@@ -14,7 +14,7 @@ npx --yes web-ext lint --source-dir extension --warnings-as-errors
 uv run --frozen python scripts/package_extension.py
 ```
 
-Upload `artifacts/mcp-browser-bridge-0.2.2.zip`. The archive contains only the six
+Upload `artifacts/mcp-browser-bridge-0.2.3.zip`. The archive contains only the six
 extension assets, license and privacy notice. It contains no browser profiles,
 credentials, job applications or native host executable. Source JS is plain,
 readable code with no build/minification step or remote executable code.
@@ -76,6 +76,13 @@ server if its tool list predates the new upload tool. Logins, CAPTCHA and interv
 are still completed manually. Snapshots
 and form actions operate in the top frame; iframe forms and protected Firefox
 pages are not supported. These limits are reported rather than bypassed.
+
+Version 0.2.3 fixes mouse-down-driven dropdowns without new permissions or tool
+arguments. After installing the signed update, reload an existing website tab
+before resuming its form so it gets the updated content listener. Reloading can
+clear unsaved form values; recheck them and inspect the application history before
+another final-send action. Updating only the Python/native host cannot change
+content code already installed in normal Firefox.
 
 ## Reviewer notes
 

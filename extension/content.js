@@ -102,6 +102,40 @@
     return {selected, notice:"Files selected once; the site may upload immediately. Inspect page validation and receipt. No automatic retry."};
   }
   window.addEventListener("pagehide", () => uploads.clear());
+  function click(e) {
+    const url = location.href;
+    const ensureTarget = () => {
+      if (location.href !== url || !e.isConnected || !visible(e) || disabled(e) ||
+          sensitive(e) || (e.control && (sensitive(e.control) || disabled(e.control))))
+        throw new Error("Click target changed during pointer events; inspect before retrying");
+    };
+    e.scrollIntoView({block:"nearest", inline:"nearest"});
+    const rect = e.getBoundingClientRect();
+    const mouse = {bubbles:true, cancelable:true, composed:true, view:window,
+      button:0, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2};
+    const pointer = {...mouse, pointerId:1, pointerType:"mouse", isPrimary:true};
+    // .click() alone misses mousedown-driven widgets (e.g. React Select).
+    // Respect cancellation of pointerdown (suppresses compatibility mouse events)
+    // and mousedown (suppresses our focus default), without replaying activation.
+    const compatibilityMouse = e.dispatchEvent(new PointerEvent("pointerdown", {...pointer, buttons:1}));
+    ensureTarget();
+    if (compatibilityMouse) {
+      const focusDefault = e.dispatchEvent(new MouseEvent("mousedown", {...mouse, buttons:1}));
+      ensureTarget();
+      if (focusDefault) {
+        const focusable = e.closest('button,input,select,textarea,a[href],[tabindex],[contenteditable="true"]');
+        focusable?.focus({preventScroll:true});
+        ensureTarget();
+      }
+    }
+    e.dispatchEvent(new PointerEvent("pointerup", {...pointer, buttons:0}));
+    ensureTarget();
+    if (compatibilityMouse) {
+      e.dispatchEvent(new MouseEvent("mouseup", {...mouse, buttons:0}));
+      ensureTarget();
+    }
+    e.click(); // Exactly one activation, including labels/checkboxes/submit buttons.
+  }
   function snapshot(maxChars) {
     const candidates = Array.from(document.querySelectorAll(
       'input,textarea,select,button,a,label,[contenteditable=true],[role=button],[role=checkbox],[role=radio],[role=combobox],[role=option]'
@@ -113,7 +147,10 @@
       value: e.matches("input,textarea,select") && e.type !== "file" ? e.value.slice(0,1024) : undefined,
       value_truncated: e.matches("input,textarea,select") && e.type !== "file" && e.value.length > 1024,
       checked: ["checkbox", "radio"].includes(e.type) ? e.checked : e.getAttribute("aria-checked") || undefined,
-      required: !!e.required, disabled: disabled(e), readonly: !!e.readOnly,
+      required: !!e.required || e.getAttribute("aria-required") === "true", disabled: disabled(e), readonly: !!e.readOnly,
+      expanded: e.hasAttribute("aria-expanded") ? e.getAttribute("aria-expanded") === "true" : undefined,
+      selected: e.hasAttribute("aria-selected") ? e.getAttribute("aria-selected") === "true" : undefined,
+      aria_controls: e.getAttribute("aria-controls")?.slice(0,256),
       accept: e.type === "file" ? e.accept : undefined,
       multiple: e.type === "file" ? e.multiple : undefined,
       files: e.type === "file" ? Array.from(e.files).map(f => f.name.slice(0,256)) : undefined,
@@ -138,7 +175,7 @@
     // Clicking a visible label can activate its otherwise hidden form control.
     if (sensitive(e) || disabled(e) || (e.control && (sensitive(e.control) || disabled(e.control))))
       throw new Error("Sensitive or disabled control; user handles login");
-    if (action === "click") { e.click(); }
+    if (action === "click") { click(e); }
     else if (action === "fill") {
       if (e.readOnly) throw new Error("Read-only control; use the visible widget");
       if (e.isContentEditable) {

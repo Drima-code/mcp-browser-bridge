@@ -362,6 +362,112 @@ async def test_snapshot_stays_within_native_message_limit():
         await browser.close()
 
 
+async def test_mousedown_combobox_selection_and_single_submit():
+    """Typed combobox text must become a selected value through widget events."""
+    script = (Path(__file__).resolve().parents[1] / 'extension/content.js').read_text()
+    async with async_playwright() as playwright:
+        browser = await playwright.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content('''<form id="application">
+          <label for="region">Based in Latin America?</label>
+          <div id="widget"><input id="region" role="combobox" aria-required="true"
+            aria-expanded="false" aria-controls="options"></div>
+          <div id="options" role="listbox" hidden>
+            <div id="yes" role="option" aria-selected="false">Yes</div>
+            <div id="no" role="option" aria-selected="false">No</div>
+          </div>
+          <button id="send">Submit</button></form>
+          <script>
+          window.selected=''; window.submissions=0; window.clicks=0;
+          const region=document.querySelector('#region');
+          const options=document.querySelector('#options');
+          // React Select-style opening: a click event alone does not open it.
+          document.querySelector('#widget').addEventListener('mousedown', e=>{
+            if(e.button!==0)return;
+            e.preventDefault(); region.focus();
+            options.hidden=false; region.setAttribute('aria-expanded','true');
+          });
+          options.addEventListener('mousedown', e=>e.preventDefault());
+          options.addEventListener('click', e=>{
+            selected=e.target.textContent; region.value=selected;
+            e.target.setAttribute('aria-selected','true');
+            options.hidden=true; region.setAttribute('aria-expanded','false');
+          });
+          document.querySelector('#send').addEventListener('click',()=>clicks++);
+          document.querySelector('#application').addEventListener('submit',e=>{
+            e.preventDefault(); if(selected==='Yes')submissions++;
+          });
+          </script>''')
+        await page.evaluate('window.browser={runtime:{onMessage:{addListener:fn=>window.handler=fn}}}')
+        await page.evaluate(script)
+        await page.evaluate("handler({drima:true,op:'act',action:'fill',selector:'#region',value:'Yes'})")
+        assert await page.evaluate('selected') == ''
+        await page.evaluate("handler({drima:true,op:'act',action:'click',selector:'#region'})")
+        assert await page.locator('#options').is_visible()
+        snap = await page.evaluate("handler({drima:true,op:'snapshot'})")
+        combo = next(c for c in snap['controls'] if c['id'] == 'region')
+        assert combo['expanded'] is True
+        assert combo['required'] is True
+        assert combo['aria_controls'] == 'options'
+        yes = next(c for c in snap['controls'] if c['role'] == 'option' and c['label'] == 'Yes')
+        assert yes['selected'] is False
+        await page.evaluate("s=>handler({drima:true,op:'act',action:'click',selector:s})", yes['selector'])
+        assert await page.evaluate('selected') == 'Yes'
+        assert await page.locator('#region').get_attribute('aria-expanded') == 'false'
+        assert await page.evaluate('document.activeElement.id') == 'region'
+        assert await page.evaluate('submissions') == 0
+        await page.evaluate("handler({drima:true,op:'act',action:'click',selector:'#send'})")
+        assert await page.evaluate('({submissions,clicks})') == {'submissions': 1, 'clicks': 1}
+        await browser.close()
+
+
+@pytest.mark.parametrize('mutation', ['remove', 'disable', 'navigate'])
+async def test_pointer_handler_changes_stop_before_activation(mutation):
+    script = (Path(__file__).resolve().parents[1] / 'extension/content.js').read_text()
+    async with async_playwright() as playwright:
+        browser = await playwright.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content('<button id="send">Submit</button>')
+        await page.evaluate('''mutation => {
+          window.activations=0;
+          const button=document.querySelector('#send');
+          button.addEventListener('click',()=>activations++);
+          button.addEventListener('mousedown',()=>{
+            if(mutation==='remove')button.remove();
+            if(mutation==='disable')button.disabled=true;
+            if(mutation==='navigate')location.hash='changed';
+          });
+          window.browser={runtime:{onMessage:{addListener:fn=>window.handler=fn}}};
+        }''', mutation)
+        await page.evaluate(script)
+        with pytest.raises(Exception, match='target changed'):
+            await page.evaluate("handler({drima:true,op:'act',action:'click',selector:'#send'})")
+        assert await page.evaluate('activations') == 0
+        await browser.close()
+
+
+async def test_cancelled_pointerdown_does_not_emit_mouse_events_or_steal_focus():
+    script = (Path(__file__).resolve().parents[1] / 'extension/content.js').read_text()
+    async with async_playwright() as playwright:
+        browser = await playwright.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content('<input id="keep"><button id="target">Action</button>')
+        await page.evaluate('''() => {
+          document.querySelector('#keep').focus(); window.events=[];
+          const button=document.querySelector('#target');
+          for(const name of ['pointerdown','mousedown','pointerup','mouseup','click'])
+            button.addEventListener(name,e=>{
+              events.push(e.type); if(e.type==='pointerdown')e.preventDefault();
+            });
+          window.browser={runtime:{onMessage:{addListener:fn=>window.handler=fn}}};
+        }''')
+        await page.evaluate(script)
+        await page.evaluate("handler({drima:true,op:'act',action:'click',selector:'#target'})")
+        assert await page.evaluate('events') == ['pointerdown', 'pointerup', 'click']
+        assert await page.evaluate('document.activeElement.id') == 'keep'
+        await browser.close()
+
+
 async def test_chunked_upload_to_real_firefox_file_input(tmp_path, monkeypatch):
     import base64
     import hashlib
