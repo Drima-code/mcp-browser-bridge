@@ -1,3 +1,11 @@
+# Repository split — 2026-10-21
+
+Independent MCP Browser Bridge repository, preserving history through 92f52a1. Contains the Firefox addon, native host, MCP connector and synthetic tests. No dedicated browser runtime. Extension/native-host IDs and socket path preserved for installed-addon compatibility.
+
+Validation: 17 bridge tests pass after namespace separation; Ruff, diff and package build pass. Real stdio discovery identifies MCP Browser Bridge, exposes four compatible tools, and lists existing Firefox tabs successfully. Codex and the Firefox native-host registration now point to this checkout. No extension code or signing identity changed.
+
+Historical notes below describe the combined repository before separation.
+
 # Status — 2026-10-05
 
 ## Custom dropdown fix — 2026-10-20

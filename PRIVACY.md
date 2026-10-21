@@ -44,4 +44,4 @@ content or send it to its service provider: consult that client's privacy settin
 and policy before approving sensitive tabs. No claim of end-to-end local-only AI
 processing is made.
 
-Source and issue reports: https://github.com/Drima-code/drima-browser-mcp
+Source and issue reports: https://github.com/Drima-code/mcp-browser-bridge

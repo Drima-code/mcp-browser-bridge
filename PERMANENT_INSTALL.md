@@ -60,18 +60,18 @@ prompt if you want current/future regular website tabs accessible after restart.
 **Reconnect native host** restores a dropped connection without resending any
 website action or expanding website permissions.
 
-Use the `drima-regular-browser` MCP (`regular-stdio`) for this browser. The original
+Use the `mcp-browser-bridge` MCP (`stdio`) for this browser. The original
 `drima-browser` (`stdio`) starts the separate automation-controlled browser and
 will not switch simply because the extension is installed.
 
 Check the connection with:
 
 ```bash
-uv run --frozen drima-browser regular-call tabs
+uv run --frozen mcp-browser-bridge call tabs
 ```
 
 Version 0.2.2 supports explicit file uploads through `regular_browser_upload` or
-`regular-call upload`; see README.md for limits and usage. Reconnect the Codex MCP
+`call upload`; see README.md for limits and usage. Reconnect the Codex MCP
 server if its tool list predates the new upload tool. Logins, CAPTCHA and interviews
 are still completed manually. Snapshots
 and form actions operate in the top frame; iframe forms and protected Firefox
@@ -94,7 +94,7 @@ debugger permission or arbitrary JavaScript evaluation tool.
 
 Install the companion host using the instructions above. Test with a synthetic
 HTML form on a local HTTP server; approve its tab in the popup, then run
-`regular-call tabs`, `snapshot` and `act`. Never use live transactions as tests.
+`call tabs`, `snapshot` and `act`. Never use live transactions as tests.
 Revoking approval, changing origin, or switching to manual mode prevents further
 access. Login controls are blocked. Native-host disconnects are recoverable from
 the popup; mutating actions are never automatically retried.

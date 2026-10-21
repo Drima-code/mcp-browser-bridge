@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
-executable = root / ".venv/bin/drima-browser-native"
+executable = root / ".venv/bin/mcp-browser-bridge-native"
 if not executable.is_file():
     raise SystemExit("Run uv sync --frozen first")
 directory = Path.home() / ".mozilla/native-messaging-hosts"
@@ -16,7 +16,7 @@ manifest.write_text(
     json.dumps(
         {
             "name": "drima_regular_browser",
-            "description": "Drima user-approved Firefox tabs",
+            "description": "MCP Browser Bridge — approved Firefox tabs",
             "path": str(executable),
             "type": "stdio",
             "allowed_extensions": ["approved-tabs@drima-browser.local"],

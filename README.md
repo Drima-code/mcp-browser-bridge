@@ -1,182 +1,19 @@
-# Drima Browser MCP
+# MCP Browser Bridge
 
-A local, visible browser controlled through MCP. No required extension, subscription,
-cloud relay, feature tier, or API key. Independently implemented using the official
-MCP Python SDK and Playwright; no Blueprint code is included.
+Control existing Firefox website tabs through the **MCP Browser Bridge** addon and a local native host. This project does not launch a separate browser.
 
-One service owns a persistent Firefox profile (Chromium is also supported). Codex, Kimi and the diagnostic
-CLI connect through it. Disconnecting an agent does not close the browser. All
-tools use stable tab IDs and explicit locators. Mutating batches stop on the first
-error, report completed actions, and never automatically repeat a submission.
+## Install
 
-## Install and run
-
-Requires Python 3.12+, uv and a graphical desktop for visible mode.
+Requires Python 3.12+, uv and Firefox 142+ on Linux.
 
 ```bash
-git clone https://github.com/Drima-code/drima-browser-mcp.git
-cd drima-browser-mcp
 uv sync --frozen
-uv run --frozen playwright install firefox chromium --no-shell
-uv run --frozen drima-browser serve
+uv run --frozen python scripts/install_regular_connector.py
+codex mcp add mcp-browser-bridge -- /absolute/path/mcp-browser-bridge/.venv/bin/mcp-browser-bridge stdio
 ```
 
-In another terminal:
+## Firefox extension
 
-```bash
-uv run --frozen drima-browser call browser_open '{"url":"https://www.getonbrd.com"}'
-uv run --frozen drima-browser call browser_tabs
-```
-
-For a service that stays available across agent restarts and starts at login:
-
-```bash
-uv run --frozen python scripts/install_user_service.py
-systemctl --user status drima-browser
-```
-
-Stop a foreground server before installing the service; both use port 8766.
-The service starts without launching Firefox; the first `browser_open` opens it.
-Sign in normally in that window. CAPTCHA and identity checks are completed by the
-user. Accounts from your existing Firefox profile are not imported or read. Some sites may reject
-automation-controlled browsers or OAuth flows; this server does not bypass them.
-
-The dedicated headed Firefox window is hidden from focus and normal Alt-Tab space
-shortly after launch when `wmctrl` is available. Browser actions continue in the
-background; bring the window forward with the desktop window switcher when a
-CAPTCHA or sign-in needs to be completed.
-
-## MCP client configuration
-
-Point a stdio client to the installed executable:
-
-```json
-{
-  "mcpServers": {
-    "drima-browser": {
-      "command": "/absolute/path/drima-browser-mcp/.venv/bin/drima-browser",
-      "args": ["stdio"]
-    }
-  }
-}
-```
-
-Codex registration:
-
-```bash
-codex mcp add drima-browser -- /absolute/path/drima-browser-mcp/.venv/bin/drima-browser stdio
-```
-
-Kimi supports a project `.mcp.json` or user `~/.kimi-code/mcp.json` in the installed
-version. Merge this server into existing configuration rather than replacing
-unrelated servers. Restart/reload the MCP client to discover newly registered tools.
-The diagnostic CLI is available immediately, even before client rediscovery.
-
-The stdio proxy loads its local token from disk; no credential is stored in these
-client configuration examples. The service must be running first. Service startup
-and browser startup are separate, so errors are easy to diagnose.
-
-## Tools
-
-| Tool | Purpose |
-|---|---|
-| `browser_status` | Service/browser status and persistent-profile location |
-| `browser_open` | Create a tab and start the browser if needed |
-| `browser_tabs` | List, focus or close tabs using stable IDs |
-| `browser_navigate` | Navigate, back, forward or reload |
-| `browser_snapshot` | Compact accessibility tree and form metadata; bounded output |
-| `browser_act` | Batch fill, click, select, check, uncheck, press, hover, scroll |
-| `browser_upload` | Upload up to 10 explicit local files, up to 25 MiB each |
-| `browser_screenshot` | JPEG as an MCP image, viewport or full page |
-| `browser_evaluate` | Explicit JavaScript evaluation in a selected page |
-| `browser_dialog` | Inspect, accept or dismiss alert/confirm/prompt dialogs |
-| `browser_wait` | Bounded wait for an element state |
-| `browser_events` | Bounded console/errors and network response metadata |
-| `browser_downloads` | List saved downloads and their status |
-| `browser_close` | Close only the dedicated browser; retain its profile |
-
-Locators use exactly one of `selector`, `role` + optional `name`, `label`, or `text`.
-Names/text are exact matches. An optional `frame` CSS selector scopes a locator to
-an iframe. Duplicate matches fail rather than choosing the first. The accessibility
-tree's role/name is often more reliable than label text for wrapped dropdowns.
-
-```json
-{
-  "tab_id": "ID_FROM_BROWSER_TABS",
-  "actions": [
-    {"action":"fill","target":{"label":"Full name"},"value":"Alex Sample"},
-    {"action":"select","target":{"role":"combobox","name":"Language"},"value":"en"}
-  ]
-}
-```
-
-`fill` replaces field content without pressing Enter. `select` takes the option
-**value** from the snapshot. Keep final submission in a separate call, record
-unknown outcome before clicking, and verify a receipt afterwards. A successful
-click only confirms a browser action, not acceptance by an employer's server.
-
-For screenshots using the CLI:
-
-```bash
-uv run --frozen drima-browser call browser_screenshot \
-  '{"tab_id":"ID"}' --image-output /tmp/browser.jpg
-```
-
-## Local data and access
-
-Default directory: `~/.local/share/drima-browser` (mode 0700), overridable with
-`DRIMA_BROWSER_DATA` or `--data-dir` before the command. It contains the browser
-profile, mode-0600 client token, and downloads. None belongs in git.
-
-The HTTP endpoint binds only to `127.0.0.1:8766`, requires a bearer token, rejects
-Origin-bearing web requests, and uses SDK host validation. The trusted local MCP
-client can read/interact with pages, evaluate JavaScript and upload explicitly
-named files; it is not a sandbox for an untrusted local agent. User-facing pages
-remain untrusted data, never instructions for the agent. Console text may contain
-site-provided private data; request headers/bodies and query strings are not logged.
-
-Calls are serialized, but this is not a multi-agent task scheduler: coordinate
-which agent owns a workflow, especially across human CAPTCHA/login pauses. Tabs
-and screenshots have no subscription cap. There is no stealth mode, CAPTCHA
-solver, OAuth bypass, or claim of complete Blueprint feature parity.
-
-## Verification
-
-```bash
-uv run --frozen pytest -q
-uv run --frozen python scripts/smoke_transport.py
-uv run --frozen python scripts/smoke_regular_upload.py
-uv run --frozen ruff check src tests scripts
-```
-
-Tests use synthetic pages in real headless Firefox and Chromium. The transport smoke test
-starts a temporary authenticated HTTP service and reconnects two stdio clients,
-verifying tool discovery, image forwarding and browser continuity. No real
-application is submitted by tests. Linux is the tested deployment; systemd
-installation is Linux-specific. Playwright uses its Ubuntu fallback build on Arch.
-
-Dependencies/reference: [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk),
-[Playwright persistent contexts](https://playwright.dev/python/docs/api/class-browsertype#browser-type-launch-persistent-context),
-[Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
-
-## Browser selection
-
-Firefox is the default. To select Chromium, run `drima-browser serve --browser chromium`.
-Each engine has a separate persistent profile. Google rejected sign-in in the
-initial Chromium session; changing engines does not guarantee OAuth acceptance.
-Use the site’s supported login methods and leave account verification to the user.
-
-### Google sign-in rejected
-
-Google may reject automation-controlled browsers even when the user types the
-credentials manually. Firefox does not guarantee acceptance. Use the destination
-site's supported email/password login or account recovery instead. If the account
-only supports Google, sign in through your regular, non-automated browser and
-complete that site's workflow there. Do not disable account security, spoof the
-browser, or copy authentication cookies to work around rejection.
-See [Google's supported-browser guidance](https://support.google.com/accounts/answer/7675428).
-
-## Optional connector for your regular Firefox (experimental)
 
 The Firefox extension is named **MCP Browser Bridge**. Its source is in
 `extension/` and is distributed under this repository's MIT license. It requires
@@ -191,8 +28,7 @@ get it signed by Mozilla (unlisted/self-distribution is sufficient), then instal
 the signed XPI through `about:addons`. A public store listing is being prepared;
 no approved Mozilla listing is claimed yet.
 
-The default MCP launches a separate profile and cannot attach to an already-running
-normal Firefox. This connector instead uses Firefox's supported extension/native
+The separate Drima Browser MCP project launches its own browser profile. This connector instead uses Firefox's supported extension/native
 messaging APIs, keeping existing sessions in that browser. **Manual per-tab approval
 is the default**, on any regular HTTP/HTTPS website. The toolbar popup also offers
 explicit opt-in automatic access to all current and future regular website tabs.
@@ -217,13 +53,13 @@ the access mode. No built-in tab-count cap; resource/message-size limits still a
 An **ERR** badge indicates a native-host connection problem. Temporary extensions
 unload when Firefox restarts; permanent installation requires Mozilla signing.
 
-Use a separate MCP entry with command `/absolute/path/.venv/bin/drima-browser`
-and args `["regular-stdio"]`. Existing `stdio` stays on the dedicated browser.
+Register MCP `mcp-browser-bridge` with command `/absolute/path/mcp-browser-bridge/.venv/bin/mcp-browser-bridge`
+and args `["stdio"]`. This server only connects to the Firefox extension.
 For immediate diagnostics without client rediscovery:
 
 ```bash
-uv run --frozen drima-browser regular-call tabs
-uv run --frozen drima-browser regular-call snapshot '{"tab_id":"APPROVED_ID"}'
+uv run --frozen mcp-browser-bridge call tabs
+uv run --frozen mcp-browser-bridge call snapshot '{"tab_id":"APPROVED_ID"}'
 ```
 
 Available tools: approved-tab listing, bounded top-frame snapshots and single
@@ -250,7 +86,7 @@ inputs and hidden inputs with visible associated labels are supported. Snapshots
 include their selectors, accepted types and selected filenames.
 
 ```bash
-uv run --frozen drima-browser regular-call upload \
+uv run --frozen mcp-browser-bridge call upload \
   '{"tab_id":"APPROVED_ID","selector":"#resume","paths":["/absolute/path/resume.pdf"]}'
 ```
 
@@ -276,7 +112,18 @@ No HTTP listener or external relay. Install only in a browser you control.
 Reference: [Mozilla native messaging](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging)
 and [activeTab permissions](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Working_with_the_Tabs_API).
 
+
+## Development
+
+```bash
+uv sync --frozen --group dev
+uv run --frozen playwright install firefox --no-shell
+uv run --frozen pytest -q
+uv run --frozen ruff check src tests scripts
+```
+
+Playwright is used only for synthetic tests, not by the bridge at runtime. Tool names remain `regular_browser_*` for client compatibility. The native host and extension IDs remain unchanged for installed addons.
+
 ## License
 
-[MIT](LICENSE). Browser profiles, tokens, downloads and personal screenshots are
-local runtime data and are not distributed with this repository.
+[MIT](LICENSE). Runtime profiles, credentials and downloads stay outside this repository.

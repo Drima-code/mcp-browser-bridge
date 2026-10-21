@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 from playwright.async_api import async_playwright
 
-from drima_browser import regular
-from drima_browser.native_host import (
+from mcp_browser_bridge import regular
+from mcp_browser_bridge.native_host import (
     ensure_private_directory,
     read_message,
     write_message,
@@ -80,7 +80,7 @@ async def test_real_native_host_roundtrip(tmp_path, monkeypatch):
     path = directory / "regular-browser.sock"
     monkeypatch.setattr(regular, "socket_path", lambda: path)
     process = subprocess.Popen(
-        [sys.executable, "-m", "drima_browser.native_host"],
+        [sys.executable, "-m", "mcp_browser_bridge.native_host"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
