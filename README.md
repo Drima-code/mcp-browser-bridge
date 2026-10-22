@@ -127,3 +127,28 @@ Playwright is used only for synthetic tests, not by the bridge at runtime. Tool 
 ## License
 
 [MIT](LICENSE). Runtime profiles, credentials and downloads stay outside this repository.
+
+## Viewer controls in version 0.2.4
+
+Snapshots prioritize the visible dialog, including its text, rather than the
+background inbox. `aria-hidden` is reported as accessibility metadata and no
+longer makes a visibly rendered control disappear. CSS-hidden and inert targets,
+password/token controls, strict matching and website access grants retain their
+checks.
+
+When `controls_truncated` is true, repeat the **read-only snapshot** with the
+returned `next_offset`. Each page reports `controls_total` and `controls_offset`;
+`limit` is 1–100. Reinspect after any page change because offsets are not stable
+across changes. An observed CSS `scope` restricts text and controls to one visible
+viewer or toolbar. Native replies remain bounded, including large option lists.
+
+`regular_browser_act` also accepts `hover`: it dispatches synthetic pointer/mouse
+events at the target without clicking or moving the desktop cursor. Inspect the
+next snapshot for a revealed toolbar. It cannot reproduce trusted native input,
+expose controls genuinely hidden by CSS without the site's handlers, or inspect
+Firefox's protected PDF viewer. No new extension permissions are required.
+
+Update the addon to 0.2.4 **and reload the website tab** before using these
+features; updating the Python server alone cannot update installed content code.
+The release addresses reproducible viewer discovery defects; private Gmail
+attachment downloads still need verification after installing the signed update.

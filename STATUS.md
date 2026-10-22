@@ -1,3 +1,28 @@
+# Viewer control discovery — 2026-10-22
+
+Prepared MCP Browser Bridge 0.2.4. Fixed two reproducible discovery defects:
+aria-hidden was incorrectly treated as visual invisibility, and a hard 100-control
+cutoff made later controls unreachable. Snapshots now prefer visible dialogs,
+accept an explicit visible CSS scope, and expose bounded pagination and totals.
+Large controls retain a forward offset when option metadata needs truncation.
+Added synthetic hover without clicks, desktop cursor movement or new permissions.
+Sensitive fields, inert/CSS-hidden targets, strict matching, access grants and
+single-shot mutations retain their checks.
+
+Validation: 21 tests pass, including four viewer regressions in real headless
+Firefox. Installed-addon smoke in a disposable Firefox profile passes viewer
+hover/ARIA/paging, binary SHA256 upload, replay rejection, custom dropdown selection
+and exactly one synthetic form submission. Ruff, JavaScript syntax, diff checks
+and Mozilla lint pass; lint has zero errors, warnings and notices. The additional
+html-scope selector edge case is covered by the viewer tests.
+
+Unsigned package: artifacts/mcp-browser-bridge-0.2.4.zip. Same extension/native
+host IDs and permissions. Needs Mozilla signing, installation in normal Firefox,
+website-tab reload and MCP rediscovery for the expanded arguments. This is a
+synthetic reproduction and correction, not a claim that live Gmail downloads are
+verified. The email collection remains incomplete pending addon installation and
+continuation of the authorized task; its private progress is outside this repo.
+
 # Repository split — 2026-10-21
 
 Independent MCP Browser Bridge repository, preserving history through 92f52a1. Contains the Firefox addon, native host, MCP connector and synthetic tests. No dedicated browser runtime. Extension/native-host IDs and socket path preserved for installed-addon compatibility.

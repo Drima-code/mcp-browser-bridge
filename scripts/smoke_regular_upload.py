@@ -35,6 +35,10 @@ def main():
               <div id="options" role="listbox" hidden>
                 <div id="yes" role="option" aria-selected="false">Yes</div>
               </div><button id="send">Submit synthetic form</button></form>
+              <button id="show-viewer" onmouseenter="document.querySelector('#viewer').hidden=false">Preview</button>
+              <section id="viewer" role="dialog" hidden><p>Synthetic PDF text</p>
+                <div aria-hidden="true"><button id="download">Download</button></div>
+                <button id="close">Close</button></section>
               <script>
               let selected='', clicks=0, submissions=0;
               const region=document.querySelector('#region'), options=document.querySelector('#options');
@@ -128,6 +132,14 @@ def main():
             if(!option)throw new Error('Visible option missing from snapshot');
             await dispatch({op:'act',...context,action:'click',selector:option.selector});
             await dispatch({op:'act',...context,action:'click',selector:'#send'});
+            await dispatch({op:'act',...context,action:'hover',selector:'#show-viewer'});
+            const viewer=await dispatch({op:'snapshot',...context,limit:1});
+            if(viewer.scope_reason!=='dialog' || viewer.controls[0]?.id!=='download' ||
+               !viewer.controls[0].aria_hidden || viewer.next_offset!==1)
+              throw new Error('Viewer toolbar discovery failed');
+            const tail=await dispatch({op:'snapshot',...context,scope:viewer.scope_selector,offset:viewer.next_offset});
+            if(tail.controls[0]?.id!=='close' || tail.next_offset!==null)
+              throw new Error('Viewer control pagination failed');
             await new Promise(resolve=>setTimeout(resolve,300));
             await fetch(base+'/report',{method:'POST',body:JSON.stringify({result,replayRejected})});
           } catch(error) {
@@ -154,7 +166,8 @@ def main():
                 assert click_events == [{'selected': 'Yes', 'clicks': 1, 'submissions': 1}], click_events
                 print('PASS: installed Firefox extension, chunked binary upload, exact SHA256, '
                       'one input/change event, duplicate commit rejected, mousedown dropdown, '
-                      'selected option, exactly one synthetic submission')
+                      'selected option, exactly one synthetic submission, hover-revealed viewer, '
+                      'visible aria-hidden toolbar and control pagination')
             finally:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:

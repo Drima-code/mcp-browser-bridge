@@ -131,21 +131,34 @@ def create_regular_server():
 
     @server.tool()
     async def regular_browser_snapshot(
-        tab_id: str, max_chars: Annotated[int, Field(ge=500, le=15000)] = 8000
+        tab_id: str, max_chars: Annotated[int, Field(ge=500, le=15000)] = 8000,
+        scope: str | None = None,
+        offset: Annotated[int, Field(ge=0, le=100000)] = 0,
+        limit: Annotated[int, Field(ge=1, le=100)] = 100,
     ):
-        """Read approved page text/controls, omitting password and token fields."""
+        """Read a visible dialog or page, omitting password and token fields.
+
+        Requires addon 0.2.4+ for scope/paging. Follow next_offset for omitted
+        controls; use an observed CSS scope to inspect a viewer or toolbar.
+        aria_hidden describes accessibility metadata, not visual visibility.
+        """
         return await request(
-            {"op": "snapshot", "tab_id": tab_id, "max_chars": max_chars}
+            {"op": "snapshot", "tab_id": tab_id, "max_chars": max_chars,
+             "scope": scope, "offset": offset, "limit": limit}
         )
 
     @server.tool()
     async def regular_browser_act(
         tab_id: str,
-        action: Literal["click", "fill", "select", "check", "uncheck"],
+        action: Literal["click", "fill", "select", "check", "uncheck", "hover"],
         selector: str,
         value: str = "",
     ):
-        """One action on exactly one visible observed CSS match. Login fields blocked. No retries."""
+        """One action on exactly one visible observed CSS match. Login fields blocked. No retries.
+
+        hover requires addon 0.2.4+ and emits synthetic pointer/mouse events,
+        without clicking or moving the desktop cursor. Inspect afterward.
+        """
         return await request(
             {
                 "op": "act",

@@ -1,6 +1,6 @@
 # Install MCP Browser Bridge permanently in normal Firefox
 
-Version 0.2.3, Firefox 142+ on Linux. The archive built here is **unsigned**.
+Version 0.2.4, Firefox 142+ on Linux. The archive built here is **unsigned**.
 Normal Firefox installs a permanent copy only after Mozilla signs it. A public
 store listing is optional; self-distribution is sufficient for personal use.
 Do not disable Firefox signature checks or change browser security settings.
@@ -14,7 +14,7 @@ npx --yes web-ext lint --source-dir extension --warnings-as-errors
 uv run --frozen python scripts/package_extension.py
 ```
 
-Upload `artifacts/mcp-browser-bridge-0.2.3.zip`. The archive contains only the six
+Upload `artifacts/mcp-browser-bridge-0.2.4.zip`. The archive contains only the six
 extension assets, license and privacy notice. It contains no browser profiles,
 credentials, job applications or native host executable. Source JS is plain,
 readable code with no build/minification step or remote executable code.
@@ -108,3 +108,12 @@ updates, not every Firefox restart. Keep the same extension ID.
 Official Mozilla instructions:
 - <https://extensionworkshop.com/documentation/publish/submitting-an-add-on/>
 - <https://extensionworkshop.com/documentation/publish/install-self-distributed/>
+
+## Viewer update 0.2.4
+
+Install the same-ID signed 0.2.4 update, reload the website tab, and reconnect the
+MCP client to discover snapshot scope/paging and hover arguments. A Python-only
+update leaves old installed content code unchanged. No new permissions are added.
+Validation uses synthetic pages; resume the authorized Gmail work to verify its
+real attachment flow after installation, without claiming that successful clicks
+alone prove a completed download.
