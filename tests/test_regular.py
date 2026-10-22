@@ -162,7 +162,7 @@ def test_background_permissions_and_origin_revocation():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / "extension/manifest.json").read_text())
     assert set(manifest["permissions"]) == {"activeTab", "nativeMessaging", "storage"}
-    assert set(manifest["optional_permissions"]) == {"http://*/*", "https://*/*"}
+    assert set(manifest["optional_permissions"]) == {"downloads", "http://*/*", "https://*/*"}
     harness = r"""
 const vm=require('vm'), fs=require('fs'), assert=require('assert');
 const events={}, messages=[];
@@ -173,10 +173,11 @@ const tabs=new Map([[1,{id:1,title:'Job',url:'https://wellfound.com/jobs/1?priva
  [4,{id:4,title:'Internal',url:'about:config'}]]);
 const event=name=>({addListener:fn=>events[name]=fn});
 const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconnect'),postMessage:m=>messages.push(m)};
-const browser={tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},sendMessage:async()=>({ok:true}),
+const browser={tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},
+ sendMessage:async(id,r)=>r.op==='content_status'?{content_version:'0.2.5'}:{ok:true},
  query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),
  onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.2.5'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
  permissions:{contains:async()=>granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>settings,set:async s=>{settings={...settings,...s}}}},
  browserAction:{setBadgeText:async()=>{}}};
@@ -493,6 +494,8 @@ async def test_chunked_upload_to_real_firefox_file_input(tmp_path, monkeypatch):
         async def bridge(payload):
             calls.append(payload)
             assert len(json.dumps(payload).encode()) < 256 * 1024
+            if payload['op'] == 'status':
+                return {'protocol_version': 1, 'addon_version': '0.2.5', 'capabilities': ['upload']}
             return await page.evaluate('r=>handler({drima:true,...r})', payload)
         monkeypatch.setattr(regular, 'request', bridge)
         result = await regular.upload('7', '#cv', [str(path)])
@@ -561,6 +564,8 @@ async def test_upload_path_limits_and_unknown_commit(tmp_path, monkeypatch):
     calls = []
     async def fake(payload):
         calls.append(payload)
+        if payload['op'] == 'status':
+            return {'protocol_version': 1, 'addon_version': '0.2.5', 'capabilities': ['upload']}
         if payload['op'] == 'upload_begin':
             return {'upload_id': 'test'}
         if payload['op'] == 'upload_commit':
@@ -583,7 +588,7 @@ async def test_upload_path_limits_and_unknown_commit(tmp_path, monkeypatch):
         await regular.upload('7', '#cv', [str(fifo)])
     with pytest.raises(TimeoutError, match='unknown'):
         await regular.upload('7', '#cv', [str(file)])
-    assert [c['op'] for c in calls] == ['upload_begin', 'upload_chunk', 'upload_commit', 'upload_abort']
+    assert [c['op'] for c in calls] == ['status', 'upload_begin', 'upload_chunk', 'upload_commit', 'upload_abort']
 
 
 async def test_upload_tool_is_discoverable():

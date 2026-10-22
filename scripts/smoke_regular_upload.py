@@ -20,6 +20,7 @@ from pathlib import Path
 def main():
     root = Path(__file__).resolve().parents[1]
     expected = bytes(range(256)) * 1000
+    download_bytes = b'%PDF-1.4\nSynthetic download tracking fixture\n%%EOF\n'
     done, events, reports, click_events = threading.Event(), [], [], []
 
     class Handler(BaseHTTPRequestHandler):
@@ -27,6 +28,14 @@ def main():
             pass
 
         def do_GET(self):
+            if self.path == '/download':
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/pdf')
+                self.send_header('Content-Disposition', 'attachment; filename="synthetic-bridge.pdf"')
+                self.send_header('Content-Length', str(len(download_bytes)))
+                self.end_headers()
+                self.wfile.write(download_bytes)
+                return
             body = b'''<!doctype html><label for="cv">CV</label>
               <input id="cv" type="file" accept=".pdf" hidden>
               <form id="application"><label for="region">Region</label>
@@ -35,6 +44,7 @@ def main():
               <div id="options" role="listbox" hidden>
                 <div id="yes" role="option" aria-selected="false">Yes</div>
               </div><button id="send">Submit synthetic form</button></form>
+              <a id="save-file" href="/download" download="synthetic-bridge.pdf">Save synthetic file</a>
               <button id="show-viewer" onmouseenter="document.querySelector('#viewer').hidden=false">Preview</button>
               <section id="viewer" role="dialog" hidden><p>Synthetic PDF text</p>
                 <div aria-hidden="true"><button id="download">Download</button></div>
@@ -96,6 +106,8 @@ def main():
         manifest = json.loads((directory / 'manifest.json').read_text())
         manifest['browser_specific_settings']['gecko']['id'] = 'upload-smoke@drima.local'
         manifest['permissions'].append('http://127.0.0.1/*')
+        manifest['permissions'].append('downloads')
+        manifest['optional_permissions'].remove('downloads')
         manifest['background']['scripts'].append('smoke.js')
         (directory / 'manifest.json').write_text(json.dumps(manifest))
         chunks = [base64.b64encode(expected[i:i+96*1024]).decode()
@@ -112,6 +124,9 @@ def main():
             }
             approved.set(tab.id,origin(base));
             const context={tab_id:String(tab.id)};
+            const status=await dispatch({op:'status',...context});
+            if(status.addon_version!=='0.2.5' || status.content_version!=='0.2.5' || status.protocol_version!==1)
+              throw new Error('Protocol/content handshake failed');
             const begin=await dispatch({op:'upload_begin',...context,selector:'#cv',files:[{
               name:'synthetic.pdf',size:SIZE,type:'application/pdf',last_modified:0}]});
             const upload={...context,upload_id:begin.upload_id};
@@ -132,6 +147,16 @@ def main():
             if(!option)throw new Error('Visible option missing from snapshot');
             await dispatch({op:'act',...context,action:'click',selector:option.selector});
             await dispatch({op:'act',...context,action:'click',selector:'#send'});
+            const watch=await dispatch({op:'downloads',...context,action:'watch',expected_filename:'synthetic-bridge.pdf'});
+            await dispatch({op:'act',...context,action:'click',selector:'#save-file'});
+            let download;
+            for(let i=0;i<100;i++) {
+              await new Promise(resolve=>setTimeout(resolve,100));
+              const observed=await dispatch({op:'downloads',...context,action:'list',watch_id:watch.watch_id});
+              download=observed.records.find(r=>r.state==='complete');
+              if(download)break;
+            }
+            if(!download?.saved_path)throw new Error('Synthetic download was not observed complete');
             await dispatch({op:'act',...context,action:'hover',selector:'#show-viewer'});
             const viewer=await dispatch({op:'snapshot',...context,limit:1});
             if(viewer.scope_reason!=='dialog' || viewer.controls[0]?.id!=='download' ||
@@ -141,7 +166,7 @@ def main():
             if(tail.controls[0]?.id!=='close' || tail.next_offset!==null)
               throw new Error('Viewer control pagination failed');
             await new Promise(resolve=>setTimeout(resolve,300));
-            await fetch(base+'/report',{method:'POST',body:JSON.stringify({result,replayRejected})});
+            await fetch(base+'/report',{method:'POST',body:JSON.stringify({result,replayRejected,download})});
           } catch(error) {
             await fetch(base+'/report',{method:'POST',body:JSON.stringify({error:error.message})});
           }
@@ -149,6 +174,9 @@ def main():
         (directory / 'smoke.js').write_text(harness)
         command = ['npx', '--yes', 'web-ext', 'run', '--source-dir', str(directory),
                    '--firefox', '/usr/bin/firefox', '--arg=-headless',
+                   '--pref=browser.download.folderList=2',
+                   '--pref=browser.download.useDownloadDir=true',
+                   '--pref=browser.download.dir=' + str(directory / 'downloads'),
                    '--no-reload', '--no-input']
         with (directory / 'runner.log').open('w+') as log:
             process = subprocess.Popen(command, stdout=log, stderr=log, start_new_session=True)
@@ -164,10 +192,14 @@ def main():
                                    'changes': 1, 'inputs': 1,
                                    'hash': hashlib.sha256(expected).hexdigest()}], events
                 assert click_events == [{'selected': 'Yes', 'clicks': 1, 'submissions': 1}], click_events
+                downloaded = Path(reports[0]['download']['saved_path'])
+                assert downloaded.parent == directory / 'downloads'
+                assert downloaded.read_bytes() == download_bytes
                 print('PASS: installed Firefox extension, chunked binary upload, exact SHA256, '
                       'one input/change event, duplicate commit rejected, mousedown dropdown, '
                       'selected option, exactly one synthetic submission, hover-revealed viewer, '
-                      'visible aria-hidden toolbar and control pagination')
+                      'visible aria-hidden toolbar, control pagination, protocol negotiation '
+                      'and completed download verified on disk')
             finally:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:

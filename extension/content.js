@@ -259,6 +259,7 @@
     if (!request.drima) return;
     if (request.expected_url && location.href !== request.expected_url)
       throw new Error("Tab navigated; inspect before retrying");
+    if (request.op === "content_status") return Promise.resolve({content_version:"0.2.5"});
     if (request.op === "snapshot") return Promise.resolve(snapshot(Math.min(15000,Math.max(500,request.max_chars || 8000)),request));
     if (["upload_begin", "upload_chunk", "upload_commit", "upload_abort"].includes(request.op))
       return Promise.resolve(upload(request));

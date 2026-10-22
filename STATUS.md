@@ -1,3 +1,36 @@
+# Protocol negotiation and download observation — 2026-10-22
+
+Prepared 0.2.5. Added status reporting for server/addon versions, protocol,
+capabilities and download permission. MCP and diagnostic actions negotiate before
+sending the requested operation. The background also checks each website's loaded
+content listener, rejecting stale code with an explicit reload instruction. No
+fallback or automatic replay of an uncertain mutation.
+
+Added future-only download watches, enabled separately through Firefox's optional
+`downloads` permission in the popup. An approved tab and explicit expected basename
+are required. Candidates match referrer origin, filename (including numbered
+variants) and time; Firefox does not provide a source-tab ID. Ambiguous/missing
+provenance yields counts without paths. Records expose bytes, completion,
+interruption/error and a usable saved path, with oversized paths explicitly omitted.
+No transfer is started, retried, cancelled, opened or deleted by this feature.
+No global/past history enumeration; only observed IDs are refreshed. Watches and
+metadata are bounded, expire, and are invalidated on navigation/access revocation.
+Permission revocation during a metadata refresh blocks the reply too.
+
+Validation: 31 tests covered by the full 30-test run plus the added popup consent
+test; all 10 protocol/download tests pass after the final metadata-bound change.
+Installed-addon smoke in a disposable Firefox profile observed a real synthetic
+HTTP attachment complete, verified its bytes and path on disk, and also passed
+handshake, upload SHA256/replay, dropdown, viewer hover and pagination checks.
+Ruff, JS syntax, diff checks and Mozilla lint pass (zero errors/warnings/notices).
+Read-only local status diagnosis confirms the installed addon cannot negotiate
+the new protocol; no website action was sent. No live Gmail download is claimed.
+
+Unsigned package: artifacts/mcp-browser-bridge-0.2.5.zip. Required base permissions
+and extension/native host IDs unchanged. Optional downloads permission is new and
+must be granted through the popup by the user. Install the Mozilla-signed same-ID
+update, reload website tabs and reconnect MCP discovery. Includes the 0.2.4 fixes.
+
 # Viewer control discovery — 2026-10-22
 
 Prepared MCP Browser Bridge 0.2.4. Fixed two reproducible discovery defects:

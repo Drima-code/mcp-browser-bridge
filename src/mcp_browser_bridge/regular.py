@@ -7,6 +7,7 @@ import mimetypes
 import os
 import stat
 from contextlib import ExitStack
+from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -14,6 +15,10 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from mcp_browser_bridge.native_host import MAX_MESSAGE, socket_path
+
+
+class AddonError(RuntimeError):
+    """A reply from the addon, distinct from local transport failures."""
 
 
 async def request(payload):
@@ -47,8 +52,47 @@ async def request(payload):
             writer.close()
             await writer.wait_closed()
     if response.get("error"):
-        raise RuntimeError(response["error"])
+        raise AddonError(response["error"])
     return response["result"]
+
+
+async def compatibility(tab_id=None, required=()):
+    payload = {"op": "status"}
+    if tab_id is not None:
+        payload["tab_id"] = tab_id
+    try:
+        status = await request(payload)
+    except AddonError as exc:
+        raise RuntimeError(
+            "Cannot negotiate with the installed addon. Install MCP Browser Bridge "
+            "0.2.5+, reload the website tab and reconnect the MCP client. "
+            f"No requested action was sent. Addon reply: {exc}"
+        ) from exc
+    if not isinstance(status, dict):
+        raise RuntimeError("Invalid addon status; update the addon and Python server. No requested action was sent.")
+    if type(status.get("protocol_version")) is not int or status["protocol_version"] != 1:
+        raise RuntimeError("Incompatible bridge protocol; update the addon and Python server. No requested action was sent.")
+    if not isinstance(status.get("capabilities"), list) or not all(isinstance(c, str) for c in status["capabilities"]):
+        raise RuntimeError("Invalid addon capabilities; update the addon and Python server. No requested action was sent.")
+    missing = set(required) - set(status.get("capabilities", []))
+    if missing:
+        raise RuntimeError(
+            f"Addon {status.get('addon_version', 'unknown')} lacks {', '.join(sorted(missing))}. "
+            "Update the addon and reload the website tab. No requested action was sent."
+        )
+    return {**status, "server_version": version("mcp-browser-bridge"), "server_protocol_version": 1}
+
+
+async def checked_request(payload, required=()):
+    features = set(required)
+    feature = {"snapshot": "snapshot_paging", "downloads": "download_watch",
+               "upload_begin": "upload"}.get(payload.get("op"))
+    if payload.get("op") == "act":
+        feature = "hover" if payload.get("action") == "hover" else "act"
+    if feature:
+        features.add(feature)
+    await compatibility(payload.get("tab_id"), features)
+    return await request(payload)
 
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -85,8 +129,8 @@ async def upload(tab_id: str, selector: str, paths: list[str]):
             metadata.append({"name": path.name, "size": info.st_size,
                              "type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
                              "last_modified": info.st_mtime_ns // 1_000_000})
-        begin = await request({"op": "upload_begin", "tab_id": tab_id,
-                               "selector": selector, "files": metadata})
+        begin = await checked_request({"op": "upload_begin", "tab_id": tab_id,
+                                       "selector": selector, "files": metadata}, ("upload",))
         upload_id = begin["upload_id"]
         context = {"tab_id": tab_id, "upload_id": upload_id}
         try:
@@ -125,9 +169,18 @@ def create_regular_server():
     )
 
     @server.tool()
+    async def regular_browser_status(tab_id: str | None = None):
+        """Report installed addon version, protocol, capabilities and download permission.
+
+        With tab_id, also verify that tab's content listener is current. No site
+        action or download is started. Old addons return a clear update error.
+        """
+        return await compatibility(tab_id)
+
+    @server.tool()
     async def regular_browser_tabs():
         """List accessible website tabs and the user-selected access mode."""
-        return await request({"op": "tabs"})
+        return await checked_request({"op": "tabs"})
 
     @server.tool()
     async def regular_browser_snapshot(
@@ -138,13 +191,13 @@ def create_regular_server():
     ):
         """Read a visible dialog or page, omitting password and token fields.
 
-        Requires addon 0.2.4+ for scope/paging. Follow next_offset for omitted
+        Requires addon 0.2.5+ for scope/paging. Follow next_offset for omitted
         controls; use an observed CSS scope to inspect a viewer or toolbar.
         aria_hidden describes accessibility metadata, not visual visibility.
         """
-        return await request(
+        return await checked_request(
             {"op": "snapshot", "tab_id": tab_id, "max_chars": max_chars,
-             "scope": scope, "offset": offset, "limit": limit}
+             "scope": scope, "offset": offset, "limit": limit}, ("snapshot_paging",)
         )
 
     @server.tool()
@@ -156,17 +209,39 @@ def create_regular_server():
     ):
         """One action on exactly one visible observed CSS match. Login fields blocked. No retries.
 
-        hover requires addon 0.2.4+ and emits synthetic pointer/mouse events,
+        hover requires addon 0.2.5+ and emits synthetic pointer/mouse events,
         without clicking or moving the desktop cursor. Inspect afterward.
         """
-        return await request(
+        return await checked_request(
             {
                 "op": "act",
                 "tab_id": tab_id,
                 "action": action,
                 "selector": selector,
                 "value": value,
-            }
+            }, ("hover",) if action == "hover" else ("act",)
+        )
+
+    @server.tool()
+    async def regular_browser_downloads(
+        tab_id: str,
+        action: Literal["watch", "list", "stop"],
+        expected_filename: Annotated[str, Field(max_length=255)] = "",
+        watch_id: str = "",
+    ):
+        """Watch future download candidates for an approved tab and expected filename.
+
+        Call watch BEFORE the site's download click, then list with its watch_id.
+        Never starts, repeats, cancels or opens a download. Reports completion,
+        interruption, bytes and saved path. Requires the optional downloads
+        permission enabled by the user in the addon popup. Firefox has no source
+        tab ID: candidates match origin, filename and time, not proven tab identity.
+        No global download history or URLs are returned; watches expire in 5 min.
+        """
+        return await checked_request(
+            {"op": "downloads", "tab_id": tab_id, "action": action,
+             "expected_filename": expected_filename, "watch_id": watch_id},
+            ("download_watch",),
         )
 
     @server.tool()
@@ -177,7 +252,7 @@ def create_regular_server():
     ):
         """Attach explicit absolute local files to one observed file input (25 MiB total).
 
-        Requires MCP Browser Bridge 0.2.2+. Selection may start a site upload;
+        Requires MCP Browser Bridge 0.2.5+. Selection may start a site upload;
         inspect filenames and server validation. Never automatically retry.
         """
         return await upload(tab_id, selector, paths)

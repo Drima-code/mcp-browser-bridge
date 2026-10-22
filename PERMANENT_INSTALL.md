@@ -1,6 +1,6 @@
 # Install MCP Browser Bridge permanently in normal Firefox
 
-Version 0.2.4, Firefox 142+ on Linux. The archive built here is **unsigned**.
+Version 0.2.5, Firefox 142+ on Linux. The archive built here is **unsigned**.
 Normal Firefox installs a permanent copy only after Mozilla signs it. A public
 store listing is optional; self-distribution is sufficient for personal use.
 Do not disable Firefox signature checks or change browser security settings.
@@ -14,7 +14,7 @@ npx --yes web-ext lint --source-dir extension --warnings-as-errors
 uv run --frozen python scripts/package_extension.py
 ```
 
-Upload `artifacts/mcp-browser-bridge-0.2.4.zip`. The archive contains only the six
+Upload `artifacts/mcp-browser-bridge-0.2.5.zip`. The archive contains only the six
 extension assets, license and privacy notice. It contains no browser profiles,
 credentials, job applications or native host executable. Source JS is plain,
 readable code with no build/minification step or remote executable code.
@@ -111,9 +111,20 @@ Official Mozilla instructions:
 
 ## Viewer update 0.2.4
 
-Install the same-ID signed 0.2.4 update, reload the website tab, and reconnect the
+Install the same-ID signed 0.2.5 update, reload the website tab, and reconnect the
 MCP client to discover snapshot scope/paging and hover arguments. A Python-only
-update leaves old installed content code unchanged. No new permissions are added.
+update leaves old installed content code unchanged. Viewer fixes need no added
+permissions; 0.2.5 separately offers optional download tracking.
 Validation uses synthetic pages; resume the authorized Gmail work to verify its
 real attachment flow after installation, without claiming that successful clicks
 alone prove a completed download.
+
+## Protocol and download tracking update 0.2.5
+
+Install the same-ID signed 0.2.5 addon, reload existing website tabs, and reconnect
+the MCP client. Version negotiation now blocks actions with stale installed
+addons or content listeners, rather than silently ignoring new parameters.
+Enable download tracking separately in the popup if needed and accept Firefox's
+optional downloads permission. The base required permissions remain unchanged.
+This permission enables future-event observation, not an automatic file download.
+See README and PRIVACY for origin/filename matching and provenance limitations.

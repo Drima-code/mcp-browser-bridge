@@ -33,15 +33,41 @@ choose files autonomously or provide website scripts with filesystem access.
 Only the trusted local MCP client names the files; a web page cannot request them.
 
 The extension has no analytics or external network endpoint. It does not read
-cookies or browser storage. Snapshots exclude password inputs, hidden inputs and
+cookies or website storage. Snapshots exclude password inputs, hidden inputs and
 controls identified as token, secret or verification-code fields. This filtering
 does not guarantee that page text contains no sensitive information.
 
 The extension keeps manual approvals in memory and stores only the selected mode
-in extension-local settings. It does not read website/browser storage. Its companion
+in extension-local settings. It does not read website storage or general browsing history. Its companion
 application relays messages locally. Your chosen MCP/AI client may retain page
 content or send it to its service provider: consult that client's privacy settings
 and policy before approving sensitive tabs. No claim of end-to-end local-only AI
 processing is made.
 
 Source and issue reports: https://github.com/Drima-code/mcp-browser-bridge
+
+## Optional download tracking
+
+Download tracking requires a separate, optional Firefox `downloads` permission,
+requested only by your click in the extension popup. It is disabled by default.
+The MCP client cannot grant that permission. Revoke it with the popup button.
+
+When the MCP client arms a watch for an approved website and an explicit filename,
+the extension observes future download events. It filters out private downloads,
+other origins, older downloads and other filenames. It does not enumerate past
+or global download history. The browser API does not identify the source tab;
+matching by origin, filename and time is reported as a candidate association.
+Missing provenance or ambiguous matches produce counts without file metadata.
+
+A matching record may transfer its basename, byte counts, completion/interruption
+state, error code and absolute saved path to the local MCP/AI client. This path
+can contain personal information; the website does not receive it. Download URLs,
+referrer query strings and file contents are not transferred by this observer.
+Only already-observed download IDs are refreshed. The bridge never starts, cancels,
+retries, opens or deletes a download through this feature.
+
+Watches accept new candidates for five minutes; memory records are discarded on
+restart or after ten minutes when the next operation/event cleans them up. Website
+navigation, tab closure, website-access revocation and download-permission
+revocation invalidate observation. Existing MCP-client retention policies apply
+separately to data already transferred to that client.

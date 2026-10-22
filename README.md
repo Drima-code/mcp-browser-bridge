@@ -148,7 +148,58 @@ next snapshot for a revealed toolbar. It cannot reproduce trusted native input,
 expose controls genuinely hidden by CSS without the site's handlers, or inspect
 Firefox's protected PDF viewer. No new extension permissions are required.
 
-Update the addon to 0.2.4 **and reload the website tab** before using these
+Update the addon to 0.2.5 **and reload the website tab** before using these
 features; updating the Python server alone cannot update installed content code.
 The release addresses reproducible viewer discovery defects; private Gmail
 attachment downloads still need verification after installing the signed update.
+
+## Version negotiation and download observation (0.2.5)
+
+`regular_browser_status` reports the Python server version, installed addon
+version, protocol, capabilities and optional download permission. Supply `tab_id`
+to check the content listener loaded in that website too. Before an action, the
+server negotiates support; outdated addons, unsupported capabilities and stale
+content listeners produce an explicit update/reload error before the requested
+action is sent. There is no fallback that silently ignores newer arguments.
+
+Download tracking is disabled by default. Enable **Download tracking** in the
+addon popup and accept Firefox's optional `downloads` permission. You can revoke
+it from the same popup. Website approval is still required independently.
+
+1. Call `regular_browser_downloads` with `action: "watch"`, the approved `tab_id`
+   and the observed attachment's `expected_filename`, before clicking Download.
+2. Click the site's Download control once.
+3. Read `action: "list"` with the returned `watch_id`. Records report progressing,
+   complete or interrupted state, bytes, errors and the saved path on completion.
+4. `action: "stop"` stops observation only. It never cancels or restarts a file.
+
+The observer listens only for future events while a watch is armed. It never
+lists global or previous download history; metadata refreshes query only IDs
+captured by that watch. Records omit download URLs and query strings. Watches
+accept new candidates for five minutes and expire from memory after ten minutes
+(cleanup runs on subsequent operations/events). Maximums: eight watches, ten
+records per watch and bounded unmatched-event counts. Restart clears all watches.
+Permission revocation, tab closure, navigation or website access revocation
+invalidates observation. An empty watch means **not observed**, not proof that
+the click failed. `tracking_error` flags a metadata-observation problem.
+
+Firefox's [DownloadItem API](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/downloads/DownloadItem)
+does not supply a source-tab ID. Matching uses referrer origin, expected basename
+(including Firefox's numbered filename variants), and start time. Results are
+explicitly candidates, not proven tab identity. Missing referrers and multiple
+matching watches return counts without disclosing paths or unrelated metadata.
+Inspect the saved document before treating it as the intended receipt.
+
+Diagnostic CLI examples:
+
+```bash
+uv run --frozen mcp-browser-bridge call status
+uv run --frozen mcp-browser-bridge call status '{"tab_id":"TAB_ID"}'
+uv run --frozen mcp-browser-bridge call downloads '{"tab_id":"TAB_ID","action":"watch","expected_filename":"boleta.pdf"}'
+uv run --frozen mcp-browser-bridge call downloads '{"tab_id":"TAB_ID","action":"list","watch_id":"WATCH_ID"}'
+```
+
+API permission reference: [Mozilla downloads](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/downloads).
+These tools do not add iframe support or desktop pointer control.
+
+Saved paths longer than 2048 characters are omitted with `path_omitted: true`, rather than returning a truncated, unusable path.

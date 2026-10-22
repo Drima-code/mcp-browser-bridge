@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "MCP Browser Bridge",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Connect website tabs to local MCP with per-tab approval or optional automatic access.",
   "browser_specific_settings": {
     "gecko": {
@@ -13,7 +13,7 @@
     }
   },
   "permissions": ["activeTab", "nativeMessaging", "storage"],
-  "optional_permissions": ["http://*/*", "https://*/*"],
+  "optional_permissions": ["downloads", "http://*/*", "https://*/*"],
   "background": {"scripts": ["background.js"]},
   "browser_action": {"default_title": "MCP Browser Bridge: access controls", "default_popup": "popup.html"}
 }
