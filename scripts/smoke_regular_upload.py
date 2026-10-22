@@ -28,6 +28,13 @@ def main():
             pass
 
         def do_GET(self):
+            if self.path == '/inner':
+                body = b'<label for="field">Frame field</label><input id="field">'
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html')
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if self.path == '/download':
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/pdf')
@@ -49,7 +56,9 @@ def main():
               <section id="viewer" role="dialog" hidden><p>Synthetic PDF text</p>
                 <div aria-hidden="true"><button id="download">Download</button></div>
                 <button id="close">Close</button></section>
+              <iframe id="embedded" src="/inner"></iframe><div id="shadow"></div>
               <script>
+              document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<input id="inside" aria-label="Shadow field">';
               let selected='', clicks=0, submissions=0;
               const region=document.querySelector('#region'), options=document.querySelector('#options');
               document.querySelector('#widget').addEventListener('mousedown',e=>{
@@ -125,8 +134,26 @@ def main():
             approved.set(tab.id,origin(base));
             const context={tab_id:String(tab.id)};
             const status=await dispatch({op:'status',...context});
-            if(status.addon_version!=='0.2.5' || status.content_version!=='0.2.5' || status.protocol_version!==1)
+            if(status.addon_version!=='0.2.6' || status.content_version!=='0.2.6' || status.protocol_version!==1)
               throw new Error('Protocol/content handshake failed');
+            await dispatch({op:'focus',...context});
+            if(!(await browser.tabs.get(tab.id)).active)throw new Error('Focus failed');
+            const main=await dispatch({op:'snapshot',...context});
+            if(!main.frames.find(f=>f.selector==='#embedded' && f.accessible))throw new Error('Frame inventory failed');
+            const inner=await dispatch({op:'snapshot',...context,frame_path:['#embedded']});
+            await dispatch({op:'act',...context,frame_path:['#embedded'],document_id:inner.document_id,
+              action:'fill',selector:'#field',value:'Frame value'});
+            const filled=await dispatch({op:'snapshot',...context,frame_path:['#embedded']});
+            if(filled.controls.find(c=>c.id==='field')?.value!=='Frame value')throw new Error('Frame fill failed');
+            const shadow=main.controls.find(c=>c.id==='inside');
+            if(shadow?.selector!=='#shadow >>> #inside')throw new Error('Shadow selector failed');
+            await dispatch({op:'act',...context,document_id:main.document_id,action:'fill',selector:shadow.selector,value:'Shadow value'});
+            const waited=await dispatch({op:'wait',...context,selector:shadow.selector,timeout_ms:0});
+            if(!waited.matched)throw new Error('Read-only wait failed');
+            let staleRejected=false;
+            try { await dispatch({op:'act',...context,document_id:'stale',action:'click',selector:'#send'}); }
+            catch(error){staleRejected=error.message.includes('Document changed');}
+            if(!staleRejected)throw new Error('Stale document guard failed');
             const begin=await dispatch({op:'upload_begin',...context,selector:'#cv',files:[{
               name:'synthetic.pdf',size:SIZE,type:'application/pdf',last_modified:0}]});
             const upload={...context,upload_id:begin.upload_id};
@@ -199,7 +226,8 @@ def main():
                       'one input/change event, duplicate commit rejected, mousedown dropdown, '
                       'selected option, exactly one synthetic submission, hover-revealed viewer, '
                       'visible aria-hidden toolbar, control pagination, protocol negotiation '
-                      'and completed download verified on disk')
+                      'and completed download verified on disk, tab activation, same-origin frame fill, '
+                      'open shadow fill, read-only wait and stale-document rejection')
             finally:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:

@@ -20,13 +20,13 @@ async def test_popup_download_permission_denial_grant_and_revoke():
           window.browser={runtime:{sendMessage:async r=>{
             calls.push({ui:r.ui});
             if(r.ui==='state')return {mode:'manual',eligible:true,connected:true,
-              addonVersion:'0.2.5',downloadsPermission:permitted};
+              addonVersion:'0.2.6',downloadsPermission:permitted};
             return {ok:true};
           }},permissions:{request:async q=>{calls.push({request:q});permitted=grant;return grant;},
             remove:async q=>{calls.push({remove:q});permitted=false;return true;}}};
         }""")
         await page.evaluate((extension / "popup.js").read_text())
-        await page.wait_for_function("document.querySelector('#status').textContent.includes('0.2.5')")
+        await page.wait_for_function("document.querySelector('#status').textContent.includes('0.2.6')")
         await page.locator("#downloads").click()
         await page.wait_for_function("document.querySelector('#error').textContent.includes('denied')")
         assert not await page.evaluate("calls.some(c=>c.ui==='downloads')")
@@ -65,11 +65,11 @@ async def test_compatible_action_is_never_replayed_on_unknown_outcome(monkeypatc
     async def fake(payload):
         calls.append(payload)
         if payload["op"] == "status":
-            return {"protocol_version": 1, "addon_version": "0.2.5", "capabilities": ["act"]}
+            return {"protocol_version": 1, "addon_version": "0.2.6", "capabilities": ["act"]}
         raise TimeoutError("unknown action outcome")
 
-    monkeypatch.setattr(regular, "request", fake)
-    with pytest.raises(TimeoutError, match="unknown"):
+    monkeypatch.setattr(regular, "_request", fake)
+    with pytest.raises(RuntimeError, match="outcome is unknown"):
         await regular.checked_request({"op": "act", "tab_id": "7"}, ("act",))
     assert [c["op"] for c in calls] == ["status", "act"]
 
@@ -78,7 +78,7 @@ def test_download_lifecycle_privacy_and_stale_content():
     script = Path(__file__).resolve().parents[1] / "extension/background.js"
     harness = r"""
 const vm=require('vm'),fs=require('fs'),assert=require('assert'),crypto=require('crypto').webcrypto;
-let now=1700000000000,downloadsPermission=false,contentVersion='0.2.5',active=1,listener,actions=0,revokeOnSearch=false;
+let now=1700000000000,downloadsPermission=false,contentVersion='0.2.6',active=1,listener,actions=0,revokeOnSearch=false;
 const events={},messages=[],items=new Map(),searches=[],tabs=new Map([
  [1,{id:1,title:'Synthetic',url:'https://medical.example/inbox'}],
  [2,{id:2,title:'Second',url:'https://medical.example/inbox'}]]);
@@ -89,7 +89,7 @@ const browser={tabs:{get:async id=>tabs.get(id),query:async q=>[tabs.get(active)
  executeScript:async()=>{},sendMessage:async(id,r)=>{
   if(r.op==='content_status')return {content_version:contentVersion}; actions++;return {ok:true};
  },onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.2.5'}),getURL:p=>'moz-extension://bridge/'+p,
+ runtime:{id:'bridge',getManifest:()=>({version:'0.2.6'}),getURL:p=>'moz-extension://bridge/'+p,
  connectNative:()=>port,onMessage:event('ui')},
  permissions:{contains:async q=>q.permissions?downloadsPermission:false,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>({}),set:async()=>{}}},browserAction:{setBadgeText:async()=>{}},
@@ -109,13 +109,13 @@ async function created(id,extra={}){
 }
 (async()=>{
  await ui({ui:'toggle',tabId:1});
- const status=await call({op:'status'});assert.equal(status.addon_version,'0.2.5');
+ const status=await call({op:'status'});assert.equal(status.addon_version,'0.2.6');
  assert.equal(status.protocol_version,1);assert.equal(status.downloads_permission,false);
  await assert.rejects(()=>call({op:'downloads',tab_id:'1',action:'watch',expected_filename:'invoice.pdf'}),/permission/);
  contentVersion='0.2.4';
  await assert.rejects(()=>call({op:'act',tab_id:'1',action:'click',selector:'#send'}),/reload/);
- assert.equal(actions,0);contentVersion='0.2.5';
- assert.equal((await call({op:'status',tab_id:'1'})).content_version,'0.2.5');
+ assert.equal(actions,0);contentVersion='0.2.6';
+ assert.equal((await call({op:'status',tab_id:'1'})).content_version,'0.2.6');
  downloadsPermission=true;await ui({ui:'downloads'});
  const w=await call({op:'downloads',tab_id:'1',action:'watch',expected_filename:'invoice.pdf'});
  assert.equal(w.state,'waiting');assert.equal(searches.length,0);

@@ -1,3 +1,34 @@
+# Document discovery and control update — 2026-10-22
+
+Prepared 0.2.6. Adds explicit approved-tab/window activation, active/window metadata,
+visible frame inventories and same-origin frame_path descent (up to eight levels).
+Cross-origin, hidden/inert and unavailable embedded documents are rejected.
+Open shadow controls are discovered with strict host >>> target selectors; scopes,
+actions and uploads share this addressing. Closed roots remain inaccessible.
+Visibility/disabled/ARIA ancestry crosses shadow hosts. Form events cross open
+shadow boundaries. Upload staging remains a single 25 MiB area across all frame
+contexts, tied to its originating document, with a single non-replayed commit.
+
+Snapshots return document_id and readiness. Optional document_id guards reject
+replacement, including same-URL frame reloads; they do not promise DOM stability.
+Read-only waits observe one target for 0..10 seconds and return matched:false on
+expiry. No action replay. Transport loss now gives an explicit unknown-outcome
+error, including uploads; capability checks reject unsupported optional arguments.
+Removed duplicate content-script injection per operation. Permissions/IDs unchanged.
+
+Validation: full 33-test suite passes; the added frame/shadow upload regression
+brings coverage to 34 tests, with all seven viewer tests passing. Installed-addon
+smoke in a disposable Firefox profile verifies tab activation, same-origin frame
+fill, shadow fill, wait, stale-document rejection, plus existing upload SHA256,
+exactly one submission and a completed synthetic download verified on disk.
+Ruff, JavaScript syntax, diff and Mozilla lint pass with zero lint notices/warnings.
+All fixtures are synthetic. No live Gmail action or completed email collection
+is claimed. Unsigned artifact: artifacts/mcp-browser-bridge-0.2.6.zip.
+
+Sign/install the same-ID update, reload website tabs and reconnect MCP discovery
+before using it in normal Firefox. This includes 0.2.4/0.2.5 changes. Resume the
+private receipt workflow only after installation; its progress stays outside git.
+
 # Protocol negotiation and download observation — 2026-10-22
 
 Prepared 0.2.5. Added status reporting for server/addon versions, protocol,

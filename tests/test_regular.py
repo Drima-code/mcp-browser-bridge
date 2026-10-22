@@ -166,18 +166,20 @@ def test_background_permissions_and_origin_revocation():
     harness = r"""
 const vm=require('vm'), fs=require('fs'), assert=require('assert');
 const events={}, messages=[];
-let listener, granted=false, active=1, settings={}, connections=0;
+let listener, granted=false, active=1, settings={}, connections=0, activations=0, windowFocus=0;
 const tabs=new Map([[1,{id:1,title:'Job',url:'https://wellfound.com/jobs/1?private=omit'}],
  [2,{id:2,title:'Other',url:'https://example.com/'}],
  [3,{id:3,title:'Private',url:'https://private.example/',incognito:true}],
  [4,{id:4,title:'Internal',url:'about:config'}]]);
 const event=name=>({addListener:fn=>events[name]=fn});
 const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconnect'),postMessage:m=>messages.push(m)};
-const browser={tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},
- sendMessage:async(id,r)=>r.op==='content_status'?{content_version:'0.2.5'}:{ok:true},
+const browser={windows:{update:async(id,r)=>{assert.equal(r.focused,true);windowFocus++;}},
+ tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},
+ update:async(id,r)=>{assert.equal(r.active,true);activations++;tabs.get(id).active=true;},
+ sendMessage:async(id,r)=>r.op==='content_status'?{content_version:'0.2.6'}:{ok:true},
  query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),
  onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.2.5'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.2.6'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
  permissions:{contains:async()=>granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>settings,set:async s=>{settings={...settings,...s}}}},
  browserAction:{setBadgeText:async()=>{}}};
@@ -192,6 +194,12 @@ const ui=r=>events.ui(r,sender);
  await listener({id:'list',op:'tabs'});
  assert.equal(messages.at(-1).result.tabs.length,1);
  assert.equal(messages.at(-1).result.tabs[0].url,'https://wellfound.com/jobs/1');
+ await listener({id:'focus-denied',op:'focus',tab_id:'2'});
+ assert(messages.at(-1).error.includes('not approved'));
+ assert.equal(activations,0);
+ await listener({id:'focus',op:'focus',tab_id:'1'});
+ assert(messages.at(-1).result.active);
+ assert.equal(activations,1);assert.equal(windowFocus,1);
  const initialConnections=connections;
  events.disconnect();
  assert.equal((await ui({ui:'state'})).connected,false);
@@ -495,7 +503,7 @@ async def test_chunked_upload_to_real_firefox_file_input(tmp_path, monkeypatch):
             calls.append(payload)
             assert len(json.dumps(payload).encode()) < 256 * 1024
             if payload['op'] == 'status':
-                return {'protocol_version': 1, 'addon_version': '0.2.5', 'capabilities': ['upload']}
+                return {'protocol_version': 1, 'addon_version': '0.2.6', 'capabilities': ['upload']}
             return await page.evaluate('r=>handler({drima:true,...r})', payload)
         monkeypatch.setattr(regular, 'request', bridge)
         result = await regular.upload('7', '#cv', [str(path)])
@@ -565,7 +573,7 @@ async def test_upload_path_limits_and_unknown_commit(tmp_path, monkeypatch):
     async def fake(payload):
         calls.append(payload)
         if payload['op'] == 'status':
-            return {'protocol_version': 1, 'addon_version': '0.2.5', 'capabilities': ['upload']}
+            return {'protocol_version': 1, 'addon_version': '0.2.6', 'capabilities': ['upload']}
         if payload['op'] == 'upload_begin':
             return {'upload_id': 'test'}
         if payload['op'] == 'upload_commit':
@@ -596,3 +604,9 @@ async def test_upload_tool_is_discoverable():
     tools = await server.list_tools()
     tool = next(t for t in tools if t.name == 'regular_browser_upload')
     assert set(tool.input_schema['required']) == {'tab_id', 'selector', 'paths'}
+
+    schemas = {t.name: t.input_schema for t in tools}
+    assert {'regular_browser_focus', 'regular_browser_wait'} <= schemas.keys()
+    for name in ('regular_browser_snapshot', 'regular_browser_act', 'regular_browser_upload', 'regular_browser_wait'):
+        assert {'frame_path', 'document_id'} <= schemas[name]['properties'].keys()
+    assert schemas['regular_browser_wait']['properties']['timeout_ms']['maximum'] == 10000

@@ -71,3 +71,15 @@ restart or after ten minutes when the next operation/event cleans them up. Websi
 navigation, tab closure, website-access revocation and download-permission
 revocation invalidate observation. Existing MCP-client retention policies apply
 separately to data already transferred to that client.
+
+
+## Embedded controls and tab activation
+
+On explicit client requests, the bridge can inspect and act within visible frames
+of the approved tab's own origin. A parent approval does not authorize embedded
+sites of other origins. Open shadow roots are inspected as part of approved page
+content; closed roots are inaccessible. Snapshots also return frame accessibility,
+document identity, readiness and active tab/window identifiers. An explicit focus
+request activates an approved tab and brings its Firefox window forward. Wait
+requests only observe a named control for up to ten seconds; they do not repeat
+website actions. These features require no additional permissions.

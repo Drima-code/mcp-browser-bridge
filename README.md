@@ -62,7 +62,7 @@ uv run --frozen mcp-browser-bridge call tabs
 uv run --frozen mcp-browser-bridge call snapshot '{"tab_id":"APPROVED_ID"}'
 ```
 
-Available tools: approved-tab listing, bounded top-frame snapshots and single
+Available tools: approved-tab listing/activation, bounded snapshots, read-only waits and single
 strict-selector click/fill/select/check/uncheck actions. Password/token controls
 blocked. Snapshots include strict CSS selectors, current checkbox state and attached filenames.
 Actions reject read-only/disabled controls and report failed value changes.
@@ -200,6 +200,49 @@ uv run --frozen mcp-browser-bridge call downloads '{"tab_id":"TAB_ID","action":"
 ```
 
 API permission reference: [Mozilla downloads](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/downloads).
-These tools do not add iframe support or desktop pointer control.
+These tools do not provide desktop pointer control. Same-origin frame support is described below.
 
 Saved paths longer than 2048 characters are omitted with `path_omitted: true`, rather than returning a truncated, unusable path.
+
+
+## Frames, open shadow roots and bounded waits (0.2.6)
+
+Install the signed 0.2.6 addon, reload website tabs and refresh MCP discovery.
+No additional permissions are required. `regular_browser_tabs` reports each
+approved tab's active state and window ID. `regular_browser_focus(tab_id)`
+activates that tab and focuses its window once, using Firefox's
+[tabs.update](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabs/update)
+and [windows.update](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/windows/update).
+
+Snapshots now enumerate visible `frames`, with their selectors and accessibility.
+Use an observed selector in `frame_path`, for example `["#embedded"]`, then inspect
+that frame. Nested paths accept up to eight selectors. Only same-origin, visible,
+non-inert frames are accessible; an approved parent never grants access to an
+embedded site of another origin. Unavailable/sandboxed frames are reported.
+Frame lists are bounded and report `frames_truncated` when incomplete.
+
+Controls within open shadow roots are included automatically. Their returned
+selectors separate each observed host with ` >>> `, for example
+`#payment-widget >>> #save`. Use that selector unchanged for scope, actions,
+uploads or waits. Each host and target must match uniquely; closed roots remain
+inaccessible. Page code cannot be evaluated through these tools.
+
+Each snapshot returns `document_id`. Pass it to subsequent snapshot, act, upload
+or wait requests to reject replacement of the inspected document, even when its
+URL is unchanged. This optional guard identifies a document, not every DOM update;
+inspect again after changing a form or viewer. Uploads preserve the frame and
+document context throughout staging and their single commit.
+
+`regular_browser_wait(tab_id, selector, state="visible", timeout_ms=5000)` polls
+read-only for visible/hidden/attached/detached state, up to 10 seconds. A timeout
+returns `matched:false`; multiple targets are an error. It supports the same
+`frame_path`, shadow selectors and `document_id`. No click or other mutation is
+repeated while waiting. Lost replies report an unknown outcome with an instruction
+to inspect before another action. A missing download event still does not prove
+that a click failed.
+
+```bash
+uv run --frozen mcp-browser-bridge call snapshot '{"tab_id":"APPROVED_ID","frame_path":["#embedded"]}'
+uv run --frozen mcp-browser-bridge call wait '{"tab_id":"APPROVED_ID","selector":"#viewer >>> #save","timeout_ms":3000}'
+uv run --frozen mcp-browser-bridge call focus '{"tab_id":"APPROVED_ID"}'
+```

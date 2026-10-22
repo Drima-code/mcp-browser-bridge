@@ -1,6 +1,6 @@
 # Install MCP Browser Bridge permanently in normal Firefox
 
-Version 0.2.5, Firefox 142+ on Linux. The archive built here is **unsigned**.
+Version 0.2.6, Firefox 142+ on Linux. The archive built here is **unsigned**.
 Normal Firefox installs a permanent copy only after Mozilla signs it. A public
 store listing is optional; self-distribution is sufficient for personal use.
 Do not disable Firefox signature checks or change browser security settings.
@@ -14,7 +14,7 @@ npx --yes web-ext lint --source-dir extension --warnings-as-errors
 uv run --frozen python scripts/package_extension.py
 ```
 
-Upload `artifacts/mcp-browser-bridge-0.2.5.zip`. The archive contains only the six
+Upload `artifacts/mcp-browser-bridge-0.2.6.zip`. The archive contains only the six
 extension assets, license and privacy notice. It contains no browser profiles,
 credentials, job applications or native host executable. Source JS is plain,
 readable code with no build/minification step or remote executable code.
@@ -73,9 +73,9 @@ uv run --frozen mcp-browser-bridge call tabs
 Version 0.2.2 supports explicit file uploads through `regular_browser_upload` or
 `call upload`; see README.md for limits and usage. Reconnect the Codex MCP
 server if its tool list predates the new upload tool. Logins, CAPTCHA and interviews
-are still completed manually. Snapshots
-and form actions operate in the top frame; iframe forms and protected Firefox
-pages are not supported. These limits are reported rather than bypassed.
+are still completed manually. Snapshots and form actions support explicit same-origin frame paths and open
+shadow roots in 0.2.6. Cross-origin frames, closed roots and protected Firefox
+pages remain inaccessible.
 
 Version 0.2.3 fixes mouse-down-driven dropdowns without new permissions or tool
 arguments. After installing the signed update, reload an existing website tab
@@ -128,3 +128,13 @@ Enable download tracking separately in the popup if needed and accept Firefox's
 optional downloads permission. The base required permissions remain unchanged.
 This permission enables future-event observation, not an automatic file download.
 See README and PRIVACY for origin/filename matching and provenance limitations.
+
+
+## Document discovery update 0.2.6
+
+Sign/install the same-ID 0.2.6 archive, reload website tabs, then reconnect MCP
+discovery for `regular_browser_focus`, `regular_browser_wait`, `frame_path` and
+`document_id`. No new permissions. See README for same-origin frame boundaries,
+open shadow selectors, bounded waits and unchanged single-shot behavior.
+The release is tested on synthetic pages; the Gmail receipt collection still
+requires resuming after installation and verifying actual saved attachments.

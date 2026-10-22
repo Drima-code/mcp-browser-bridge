@@ -10,8 +10,8 @@ function eligible(tab) {
 function origin(url) { return new URL(url).origin; }
 function safeUrl(url) { const u = new URL(url); return u.origin + u.pathname; }
 const PROTOCOL_VERSION = 1;
-const CONTENT_VERSION = "0.2.5";
-const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch"];
+const CONTENT_VERSION = "0.2.6";
+const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard"];
 const watches = new Map(), pendingDownloads = new Map();
 const watchLifetime = 5 * 60 * 1000;
 let downloadListeners = false;
@@ -188,19 +188,25 @@ async function dispatch(request) {
     const tabs = [];
     for (const tab of candidates) {
       if (tab && await allowed(tab))
-        tabs.push({tab_id: String(tab.id), title: tab.title, url: safeUrl(tab.url)});
+        tabs.push({tab_id: String(tab.id), title: tab.title, url: safeUrl(tab.url), active:!!tab.active, window_id:tab.windowId});
     }
     return {mode, tabs};
   }
   const id = Number(request.tab_id);
   const tab = await browser.tabs.get(id);
   if (!await allowed(tab)) throw new Error("Tab not approved. Use the extension popup to grant access.");
+  if (request.op === "focus") {
+    await browser.tabs.update(id,{active:true});
+    const current = await browser.tabs.get(id);
+    if (current.url !== tab.url || !await allowed(current)) throw new Error("Tab changed during activation; inspect before continuing.");
+    await browser.windows.update(current.windowId,{focused:true});
+    return {tab_id:String(id),active:true,window_id:current.windowId,notice:"Tab and window activated once."};
+  }
   if (request.op === "status") return status(tab);
   if (request.op === "downloads") return downloadOperation(request,tab);
-  if (!["snapshot", "act", "upload_begin", "upload_chunk", "upload_commit", "upload_abort"].includes(request.op)) throw new Error("Unsupported operation");
+  if (!["snapshot", "wait", "act", "upload_begin", "upload_chunk", "upload_commit", "upload_abort"].includes(request.op)) throw new Error("Unsupported operation");
   await currentContent(tab);
   // Content code is packaged and fixed; requests are data, never executable JS.
-  await browser.tabs.executeScript(id, {file: "content.js"});
   const current = await browser.tabs.get(id);
   if (current.url !== tab.url || !await allowed(current)) throw new Error("Tab changed; inspect before retrying.");
   return browser.tabs.sendMessage(id, {...request, drima: true, expected_url: current.url});

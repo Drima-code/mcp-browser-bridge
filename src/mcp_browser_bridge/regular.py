@@ -21,7 +21,7 @@ class AddonError(RuntimeError):
     """A reply from the addon, distinct from local transport failures."""
 
 
-async def request(payload):
+async def _request(payload):
     path = socket_path()
     try:
         directory = path.parent.lstat()
@@ -51,9 +51,21 @@ async def request(payload):
         finally:
             writer.close()
             await writer.wait_closed()
+    if not isinstance(response, dict) or not ("result" in response or "error" in response):
+        raise RuntimeError("Invalid bridge reply; outcome unknown. Inspect before another action. No automatic retry.")
     if response.get("error"):
         raise AddonError(response["error"])
     return response["result"]
+
+
+async def request(payload):
+    try:
+        return await _request(payload)
+    except (TimeoutError, ConnectionError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Bridge reply lost during {payload.get('op', 'operation')}; outcome is unknown. "
+            "No automatic retry. Inspect the tab or download watch before another action."
+        ) from exc
 
 
 async def compatibility(tab_id=None, required=()):
@@ -86,11 +98,18 @@ async def compatibility(tab_id=None, required=()):
 async def checked_request(payload, required=()):
     features = set(required)
     feature = {"snapshot": "snapshot_paging", "downloads": "download_watch",
-               "upload_begin": "upload"}.get(payload.get("op"))
+               "focus": "focus", "wait": "wait", "upload_begin": "upload"}.get(payload.get("op"))
     if payload.get("op") == "act":
         feature = "hover" if payload.get("action") == "hover" else "act"
     if feature:
         features.add(feature)
+    if payload.get("frame_path"):
+        features.add("frame_path")
+    if payload.get("document_id"):
+        features.add("document_guard")
+    if any(" >>> " in s for s in [payload.get("selector") or "", payload.get("scope") or "",
+                                 *(payload.get("frame_path") or [])]):
+        features.add("shadow_dom")
     await compatibility(payload.get("tab_id"), features)
     return await request(payload)
 
@@ -99,7 +118,8 @@ MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 96 * 1024
 
 
-async def upload(tab_id: str, selector: str, paths: list[str]):
+async def upload(tab_id: str, selector: str, paths: list[str], frame_path: list[str] | None = None,
+                 document_id: str | None = None):
     """Transfer explicit regular files in bounded messages; attach once, never retry."""
     if not 1 <= len(paths) <= 10:
         raise ValueError("Provide between 1 and 10 explicit file paths")
@@ -129,10 +149,11 @@ async def upload(tab_id: str, selector: str, paths: list[str]):
             metadata.append({"name": path.name, "size": info.st_size,
                              "type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
                              "last_modified": info.st_mtime_ns // 1_000_000})
+        target = {"frame_path": frame_path or [], "document_id": document_id}
         begin = await checked_request({"op": "upload_begin", "tab_id": tab_id,
-                                       "selector": selector, "files": metadata}, ("upload",))
+                                       "selector": selector, "files": metadata, **target}, ("upload",))
         upload_id = begin["upload_id"]
-        context = {"tab_id": tab_id, "upload_id": upload_id}
+        context = {"tab_id": tab_id, "upload_id": upload_id, **target}
         try:
             for index, (file, meta) in enumerate(zip(files, metadata, strict=True)):
                 offset = 0
@@ -183,21 +204,49 @@ def create_regular_server():
         return await checked_request({"op": "tabs"})
 
     @server.tool()
+    async def regular_browser_focus(tab_id: str):
+        """Activate one approved Firefox tab and focus its window once. No retry."""
+        return await checked_request({"op": "focus", "tab_id": tab_id})
+
+    @server.tool()
+    async def regular_browser_wait(
+        tab_id: str, selector: str,
+        state: Literal["visible", "hidden", "attached", "detached"] = "visible",
+        timeout_ms: Annotated[int, Field(ge=0, le=10000)] = 5000,
+        frame_path: list[str] | None = None, document_id: str | None = None,
+    ):
+        """Observe one target for up to 10 seconds. Read-only; never repeats an action.
+
+        Use observed frame selectors for same-origin descent. Supports open shadow
+        selectors separated by ' >>> '. Pass snapshot document_id to reject reloads.
+        """
+        return await checked_request({"op": "wait", "tab_id": tab_id, "selector": selector,
+                                      "state": state, "timeout_ms": timeout_ms,
+                                      "frame_path": frame_path or [], "document_id": document_id})
+
+    @server.tool()
     async def regular_browser_snapshot(
         tab_id: str, max_chars: Annotated[int, Field(ge=500, le=15000)] = 8000,
         scope: str | None = None,
         offset: Annotated[int, Field(ge=0, le=100000)] = 0,
         limit: Annotated[int, Field(ge=1, le=100)] = 100,
+        frame_path: list[str] | None = None,
+        document_id: str | None = None,
     ):
         """Read a visible dialog or page, omitting password and token fields.
 
         Requires addon 0.2.5+ for scope/paging. Follow next_offset for omitted
         controls; use an observed CSS scope to inspect a viewer or toolbar.
         aria_hidden describes accessibility metadata, not visual visibility.
+        Addon 0.2.6 supports open shadow selectors separated by ' >>> ', frame
+        inventory and explicit same-origin frame_path descent. Returned document_id
+        can guard later operations against document replacement. Closed shadow
+        roots and cross-origin frames remain inaccessible.
         """
         return await checked_request(
             {"op": "snapshot", "tab_id": tab_id, "max_chars": max_chars,
-             "scope": scope, "offset": offset, "limit": limit}, ("snapshot_paging",)
+             "scope": scope, "offset": offset, "limit": limit,
+             "frame_path": frame_path or [], "document_id": document_id}, ("snapshot_paging",)
         )
 
     @server.tool()
@@ -206,6 +255,7 @@ def create_regular_server():
         action: Literal["click", "fill", "select", "check", "uncheck", "hover"],
         selector: str,
         value: str = "",
+        frame_path: list[str] | None = None, document_id: str | None = None,
     ):
         """One action on exactly one visible observed CSS match. Login fields blocked. No retries.
 
@@ -218,7 +268,7 @@ def create_regular_server():
                 "tab_id": tab_id,
                 "action": action,
                 "selector": selector,
-                "value": value,
+                "value": value, "frame_path": frame_path or [], "document_id": document_id,
             }, ("hover",) if action == "hover" else ("act",)
         )
 
@@ -249,12 +299,13 @@ def create_regular_server():
         tab_id: str,
         selector: str,
         paths: Annotated[list[str], Field(min_length=1, max_length=10)],
+        frame_path: list[str] | None = None, document_id: str | None = None,
     ):
         """Attach explicit absolute local files to one observed file input (25 MiB total).
 
         Requires MCP Browser Bridge 0.2.5+. Selection may start a site upload;
         inspect filenames and server validation. Never automatically retry.
         """
-        return await upload(tab_id, selector, paths)
+        return await upload(tab_id, selector, paths, frame_path, document_id)
 
     return server
