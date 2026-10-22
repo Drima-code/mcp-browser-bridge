@@ -219,3 +219,77 @@ async def test_upload_staging_is_bounded_across_frames_and_shadow_roots():
         assert await page.evaluate('window.changes') == 1
         assert await page.evaluate("host.shadowRoot.querySelector('#file').files[0].text()") == 'abc'
         await browser.close()
+
+
+async def test_google_account_rows_require_opt_in_and_preserve_sensitive_fields():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        html = '''<div role="link" data-identifier="alex@example.test" id="account"
+          onclick="window.clicks=(window.clicks||0)+1"><span id="name">Alex Sample</span>
+          <button id="nested">Account details</button></div>
+          <input type="password" id="password"><input id="otp" autocomplete="one-time-code">
+          <input type="hidden" id="token"><button id="normal">Other action</button>'''
+        await page.route('https://accounts.google.com/**', lambda r: r.fulfill(
+            content_type='text/html', body=html))
+        await page.goto('https://accounts.google.com/synthetic-chooser')
+        await install(page)
+        assert [c['id'] for c in (await snapshot(page))['controls']] == ['normal']
+        for target in ['#account', '#name', '#nested']:
+            with pytest.raises(Exception, match='enabled in the extension popup'):
+                await page.evaluate("s=>handler({drima:true,op:'act',action:'click',selector:s})", target)
+        enabled = await snapshot(page, google_account_selection=True)
+        assert [c['id'] for c in enabled['controls']] == ['account', 'nested', 'normal']
+        account = enabled['controls'][0]
+        await page.evaluate("s=>handler({drima:true,op:'act',action:'click',selector:s,google_account_selection:true})",
+                            account['selector'])
+        assert await page.evaluate('window.clicks') == 1
+        for target in ['#password', '#otp', '#token']:
+            with pytest.raises(Exception, match='Sensitive|visible match'):
+                await page.evaluate("s=>handler({drima:true,op:'act',action:'fill',selector:s,value:'blocked',google_account_selection:true})", target)
+        with pytest.raises(Exception, match='click-only'):
+            await page.evaluate("handler({drima:true,op:'act',action:'fill',selector:'#account',value:'x',google_account_selection:true})")
+        # A previously observed child selector stops working when opt-in is off.
+        with pytest.raises(Exception, match='enabled in the extension popup'):
+            await page.evaluate("handler({drima:true,op:'act',action:'click',selector:'#name',google_account_selection:false})")
+        assert await page.evaluate('window.clicks') == 1
+        await page.route('https://accounts.google.com.evil.test/**', lambda r: r.fulfill(
+            content_type='text/html', body=html))
+        await page.goto('https://accounts.google.com.evil.test/synthetic-chooser')
+        await install(page)
+        assert not any(c['id'] == 'account' for c in
+                       (await snapshot(page, google_account_selection=True))['controls'])
+        await browser.close()
+
+
+async def test_google_account_popup_setting_and_failed_save():
+    extension = Path(__file__).resolve().parents[1] / 'extension'
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content((extension / 'popup.html').read_text())
+        await page.evaluate('''() => {
+          window.state={mode:'manual',eligible:true,googleAccountSelection:false};
+          window.changes=[];window.rejectSave=false;
+          window.browser={runtime:{sendMessage:async r=>{
+            if(r.ui==='google-account-selection') {
+              changes.push(r.enabled);
+              if(rejectSave)throw new Error('Synthetic storage failure');
+              state.googleAccountSelection=r.enabled;
+            }
+            return state;
+          }}};
+        }''')
+        await page.evaluate((extension / 'popup.js').read_text())
+        option = page.locator('#google-account-selection')
+        assert not await option.is_checked()
+        await option.check()
+        await page.wait_for_function('state.googleAccountSelection===true')
+        await option.uncheck()
+        await page.wait_for_function('changes.length===2 && state.googleAccountSelection===false')
+        assert await page.evaluate('changes') == [True, False]
+        await page.evaluate('rejectSave=true')
+        await option.click()
+        await page.wait_for_function("document.querySelector('#error').textContent.includes('storage failure')")
+        assert not await option.is_checked()
+        await browser.close()

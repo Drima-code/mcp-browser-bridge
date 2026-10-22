@@ -1,3 +1,33 @@
+# Optional Google account selection — 2026-10-22
+
+Prepared 0.2.7. Adds an explicit popup checkbox, off by default, for selecting an
+existing Google account on approved https://accounts.google.com tabs. Exposes
+role=link/data-identifier account rows; row and descendant actions are click-only
+and blocked with the option off. The setting grants no website access, persists
+locally and can be revoked in the popup. Native requests cannot enable or forge
+it; background forwards only its trusted setting. Serialized writes preserve the
+last choice during concurrent changes. Passwords, verification codes, CAPTCHA and
+assessments remain manual. No new permissions or extension/native host IDs.
+
+Also fixes verification-code filtering to read the autocomplete HTML attribute,
+including when Firefox leaves the corresponding DOM property empty. Updated MCP
+instructions, privacy notice, install guide and copy-ready release notes.
+
+Validation: all 36 tests pass. New synthetic coverage checks default-off discovery,
+strict single account click, disabled child selectors, exact Google origin,
+password/OTP filtering while enabled, popup save/error behavior, native forgery,
+trusted popup sender, persistence and concurrent setting changes. Installed-addon
+smoke passes upload SHA256, single submission/events, dropdown, hover, pagination,
+download completion, focus, same-origin frames, open shadow roots and document
+guards. Ruff, JavaScript syntax, diff check and Mozilla lint pass; lint reports
+zero errors, warnings or notices. All test pages/accounts are synthetic.
+
+Unsigned archive: artifacts/mcp-browser-bridge-0.2.7.zip (8 expected assets verified).
+SHA256: 0f151646ac38ef8ebfa7af6525d4433e1d49df8ee6d1a7c0049e7f14d4156457
+Sign/install as a same-ID Mozilla update, reload website tabs and reconnect MCP
+for updated tool instructions. Then opt in using the popup checkbox if desired.
+Installed normal Firefox remains 0.2.6; no live Google chooser test is claimed.
+
 # Document discovery and control update — 2026-10-22
 
 Prepared 0.2.6. Adds explicit approved-tab/window activation, active/window metadata,

@@ -8,11 +8,18 @@ async function render() {
   $("downloads").disabled = !!state.downloadsPermission;
   $("downloads-off").disabled = !state.downloadsPermission;
   $("reconnect").disabled = state.connected;
+  $("google-account-selection").checked = state.googleAccountSelection === true;
   $("toggle").disabled = state.mode !== "manual" || !state.eligible;
   $("toggle").textContent = state.approved ? "Revoke this tab" : "Approve this tab";
   $("all").disabled = state.mode === "all" || !$("consent").checked;
 }
 function fail(error) { $("error").textContent = error.message; }
+$("google-account-selection").addEventListener("change", async () => {
+  try {
+    await browser.runtime.sendMessage({ui:"google-account-selection",enabled:$("google-account-selection").checked});
+    await render();
+  } catch (error) { await render().catch(() => {}); fail(error); }
+});
 $("downloads").addEventListener("click", async () => {
   try {
     const granted = await browser.permissions.request({permissions:["downloads"]});

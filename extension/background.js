@@ -3,6 +3,9 @@ const approved = new Map();
 const allSites = {origins: ["http://*/*", "https://*/*"]};
 let port = null;
 let mode = "manual";
+let googleAccountSelection = false;
+let accountSettingWrites = Promise.resolve();
+let accountSettingRevision = 0;
 function eligible(tab) {
   try { return !tab.incognito && ["http:", "https:"].includes(new URL(tab.url).protocol); }
   catch (_) { return false; }
@@ -10,8 +13,8 @@ function eligible(tab) {
 function origin(url) { return new URL(url).origin; }
 function safeUrl(url) { const u = new URL(url); return u.origin + u.pathname; }
 const PROTOCOL_VERSION = 1;
-const CONTENT_VERSION = "0.2.6";
-const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard"];
+const CONTENT_VERSION = "0.2.7";
+const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection"];
 const watches = new Map(), pendingDownloads = new Map();
 const watchLifetime = 5 * 60 * 1000;
 let downloadListeners = false;
@@ -153,7 +156,7 @@ async function status(tab) {
   await installDownloadListeners();
   const result = {addon_version:browser.runtime.getManifest().version,protocol_version:PROTOCOL_VERSION,
     capabilities,downloads_permission:await browser.permissions.contains({permissions:["downloads"]}),
-    downloads_available:downloadListeners};
+    downloads_available:downloadListeners,google_account_selection:googleAccountSelection};
   if (tab) result.content_version = await currentContent(tab);
   return result;
 }
@@ -209,7 +212,8 @@ async function dispatch(request) {
   // Content code is packaged and fixed; requests are data, never executable JS.
   const current = await browser.tabs.get(id);
   if (current.url !== tab.url || !await allowed(current)) throw new Error("Tab changed; inspect before retrying.");
-  return browser.tabs.sendMessage(id, {...request, drima: true, expected_url: current.url});
+  return browser.tabs.sendMessage(id, {...request, drima: true, expected_url: current.url,
+    google_account_selection:googleAccountSelection});
 }
 function connect() {
   if (port) return;
@@ -234,7 +238,8 @@ async function manualMode() {
   await refreshBadge();
 }
 const ready = (async () => {
-  const settings = await browser.storage.local.get("mode");
+  const settings = await browser.storage.local.get(["mode", "googleAccountSelection"]);
+  googleAccountSelection = settings.googleAccountSelection === true;
   if (settings.mode === "all" && await browser.permissions.contains(allSites)) {
     mode = "all";
     connect();
@@ -249,13 +254,25 @@ browser.runtime.onMessage.addListener(async (request, sender) => {
   if (request.ui === "state") {
     const [tab] = await browser.tabs.query({active: true, currentWindow: true});
     return {mode, connected: !!port, downloadsPermission:await browser.permissions.contains({permissions:["downloads"]}),
-      addonVersion:browser.runtime.getManifest().version, eligible: !!tab && eligible(tab),
+      addonVersion:browser.runtime.getManifest().version, googleAccountSelection, eligible: !!tab && eligible(tab),
       approved: !!tab && eligible(tab) && approved.get(tab.id) === origin(tab.url), tabId: tab?.id};
   }
   if (request.ui === "reconnect") {
     connect();
     await refreshBadge();
     return {ok: true};
+  }
+  if (request.ui === "google-account-selection") {
+    if (typeof request.enabled !== "boolean") throw new Error("Account selection setting must be a boolean.");
+    // Disable immediately, including during the asynchronous storage write.
+    googleAccountSelection = false;
+    const revision = ++accountSettingRevision;
+    const write = accountSettingWrites.catch(() => {}).then(() =>
+      browser.storage.local.set({googleAccountSelection:request.enabled}));
+    accountSettingWrites = write;
+    await write;
+    if (revision === accountSettingRevision) googleAccountSelection = request.enabled;
+    return {ok:true};
   }
   if (request.ui === "downloads") {
     if (!await browser.permissions.contains({permissions:["downloads"]}))

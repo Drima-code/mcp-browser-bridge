@@ -165,7 +165,7 @@ def test_background_permissions_and_origin_revocation():
     assert set(manifest["optional_permissions"]) == {"downloads", "http://*/*", "https://*/*"}
     harness = r"""
 const vm=require('vm'), fs=require('fs'), assert=require('assert');
-const events={}, messages=[];
+const events={}, messages=[], forwarded=[];
 let listener, granted=false, active=1, settings={}, connections=0, activations=0, windowFocus=0;
 const tabs=new Map([[1,{id:1,title:'Job',url:'https://wellfound.com/jobs/1?private=omit'}],
  [2,{id:2,title:'Other',url:'https://example.com/'}],
@@ -176,10 +176,10 @@ const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconne
 const browser={windows:{update:async(id,r)=>{assert.equal(r.focused,true);windowFocus++;}},
  tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},
  update:async(id,r)=>{assert.equal(r.active,true);activations++;tabs.get(id).active=true;},
- sendMessage:async(id,r)=>r.op==='content_status'?{content_version:'0.2.6'}:{ok:true},
+ sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.2.7'}:{ok:true}},
  query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),
  onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.2.6'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.2.7'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
  permissions:{contains:async()=>granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>settings,set:async s=>{settings={...settings,...s}}}},
  browserAction:{setBadgeText:async()=>{}}};
@@ -188,6 +188,9 @@ const sender={id:'bridge',url:'moz-extension://bridge/popup.html'};
 const ui=r=>events.ui(r,sender);
 (async()=>{
  assert.equal((await ui({ui:'state'})).mode,'manual');
+ assert.equal((await ui({ui:'state'})).googleAccountSelection,false);
+ await assert.rejects(()=>events.ui({ui:'google-account-selection',enabled:true},{id:'bridge',url:'https://evil.example'}),/popup/);
+ await assert.rejects(()=>ui({ui:'google-account-selection',enabled:'true'}),/boolean/);
  await assert.rejects(()=>ui({ui:'all',confirmed:true}),/permission/);
  await assert.rejects(()=>events.ui({ui:'all',confirmed:true},{id:'bridge',url:'https://evil.example'}),/popup/);
  await ui({ui:'toggle',tabId:1});
@@ -219,6 +222,18 @@ const ui=r=>events.ui(r,sender);
  await ui({ui:'toggle',tabId:2});
  await listener({id:'other',op:'snapshot',tab_id:'2'});
  assert(messages.at(-1).result.ok);
+ await listener({id:'forged-setting',op:'snapshot',tab_id:'2',google_account_selection:true});
+ assert.equal(forwarded.at(-1).google_account_selection,false);
+ await listener({id:'native-enable',op:'google-account-selection',tab_id:'2',enabled:true});
+ assert(messages.at(-1).error.includes('Unsupported'));
+ await ui({ui:'google-account-selection',enabled:true});
+ await listener({id:'enabled',op:'snapshot',tab_id:'2',google_account_selection:false});
+ assert.equal(forwarded.at(-1).google_account_selection,true);
+ assert.equal(settings.googleAccountSelection,true);
+ // Concurrent changes preserve the final choice, both now and after restart.
+ await Promise.all([ui({ui:'google-account-selection',enabled:true}),ui({ui:'google-account-selection',enabled:false})]);
+ assert.equal((await ui({ui:'state'})).googleAccountSelection,false);
+ assert.equal(settings.googleAccountSelection,false);
  await listener({id:'upload-allowed',op:'upload_begin',tab_id:'2'});
  assert(messages.at(-1).result.ok);
  await listener({id:'upload-blocked',op:'upload_commit',tab_id:'1'});
@@ -250,9 +265,10 @@ const ui=r=>events.ui(r,sender);
  await listener({id:'stopped',op:'tabs'});
  assert.equal(messages.at(-1).result.tabs.length,0);
  // Restart restores opt-in only if host permissions still exist.
- settings={mode:'all'};
+ settings={mode:'all',googleAccountSelection:true};
  vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{browser,URL,Map,Set});
  assert.equal((await ui({ui:'state'})).mode,'all');
+ assert.equal((await ui({ui:'state'})).googleAccountSelection,true);
  granted=false;
  vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{browser,URL,Map,Set});
  assert.equal((await ui({ui:'state'})).mode,'manual');
@@ -503,7 +519,7 @@ async def test_chunked_upload_to_real_firefox_file_input(tmp_path, monkeypatch):
             calls.append(payload)
             assert len(json.dumps(payload).encode()) < 256 * 1024
             if payload['op'] == 'status':
-                return {'protocol_version': 1, 'addon_version': '0.2.6', 'capabilities': ['upload']}
+                return {'protocol_version': 1, 'addon_version': '0.2.7', 'capabilities': ['upload']}
             return await page.evaluate('r=>handler({drima:true,...r})', payload)
         monkeypatch.setattr(regular, 'request', bridge)
         result = await regular.upload('7', '#cv', [str(path)])
@@ -573,7 +589,7 @@ async def test_upload_path_limits_and_unknown_commit(tmp_path, monkeypatch):
     async def fake(payload):
         calls.append(payload)
         if payload['op'] == 'status':
-            return {'protocol_version': 1, 'addon_version': '0.2.6', 'capabilities': ['upload']}
+            return {'protocol_version': 1, 'addon_version': '0.2.7', 'capabilities': ['upload']}
         if payload['op'] == 'upload_begin':
             return {'upload_id': 'test'}
         if payload['op'] == 'upload_commit':

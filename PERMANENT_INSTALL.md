@@ -1,6 +1,6 @@
 # Install MCP Browser Bridge permanently in normal Firefox
 
-Version 0.2.6, Firefox 142+ on Linux. The archive built here is **unsigned**.
+Version 0.2.7, Firefox 142+ on Linux. The archive built here is **unsigned**.
 Normal Firefox installs a permanent copy only after Mozilla signs it. A public
 store listing is optional; self-distribution is sufficient for personal use.
 Do not disable Firefox signature checks or change browser security settings.
@@ -14,7 +14,7 @@ npx --yes web-ext lint --source-dir extension --warnings-as-errors
 uv run --frozen python scripts/package_extension.py
 ```
 
-Upload `artifacts/mcp-browser-bridge-0.2.6.zip`. The archive contains only the six
+Upload `artifacts/mcp-browser-bridge-0.2.7.zip`. The archive contains only the six
 extension assets, license and privacy notice. It contains no browser profiles,
 credentials, job applications or native host executable. Source JS is plain,
 readable code with no build/minification step or remote executable code.
@@ -72,8 +72,8 @@ uv run --frozen mcp-browser-bridge call tabs
 
 Version 0.2.2 supports explicit file uploads through `regular_browser_upload` or
 `call upload`; see README.md for limits and usage. Reconnect the Codex MCP
-server if its tool list predates the new upload tool. Logins, CAPTCHA and interviews
-are still completed manually. Snapshots and form actions support explicit same-origin frame paths and open
+server if its tool list predates the new upload tool. Passwords, verification codes,
+CAPTCHA and interviews are still completed manually. Snapshots and form actions support explicit same-origin frame paths and open
 shadow roots in 0.2.6. Cross-origin frames, closed roots and protected Firefox
 pages remain inaccessible.
 
@@ -138,3 +138,12 @@ discovery for `regular_browser_focus`, `regular_browser_wait`, `frame_path` and
 open shadow selectors, bounded waits and unchanged single-shot behavior.
 The release is tested on synthetic pages; the Gmail receipt collection still
 requires resuming after installation and verifying actual saved attachments.
+
+## Google account selection update 0.2.7
+
+Sign/install the same-ID 0.2.7 archive and reload website tabs. In the extension
+popup, enable **Allow the MCP client to select an existing Google account** only
+when you want this behavior. It defaults to off; website access is still required.
+This enables account-row clicks on accounts.google.com, not password entry or
+verification. Reconnect MCP discovery for the updated tool instructions. Copy-ready
+release notes are in [RELEASE_NOTES_0.2.7.md](RELEASE_NOTES_0.2.7.md).

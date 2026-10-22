@@ -50,6 +50,12 @@ access**, then accept Firefox's optional website permission prompt. **ALL** mark
 that mode, which persists across restarts. **Switch to manual** stops automatic
 access and removes those optional permissions. The native MCP client cannot change
 the access mode. No built-in tab-count cap; resource/message-size limits still apply.
+The popup also has an optional **Google account selection** checkbox, off by default.
+When enabled, account chooser rows on approved `https://accounts.google.com` tabs
+become click targets. Selecting an existing account can sign you into a website.
+The choice persists and can be disabled in the popup; the MCP client cannot change it.
+Passwords, verification codes and CAPTCHA still require the user.
+
 An **ERR** badge indicates a native-host connection problem. Temporary extensions
 unload when Firefox restarts; permanent installation requires Mozilla signing.
 
@@ -95,7 +101,7 @@ upload immediately; it does not prove the employer accepted the application.
 Inspect filenames and page validation before submitting. A timeout or navigation
 change must be inspected before any retry. No directory uploads or file-picker
 automation. Iframe uploads and sites requiring trusted picker events remain manual.
-The user still handles login/CAPTCHA/assessments.
+The user still handles passwords, verification codes, CAPTCHA and assessments.
 
 Install the Mozilla-signed **0.2.3** update with the same extension ID. The local
 Python code is available immediately through the diagnostic CLI above; reconnect

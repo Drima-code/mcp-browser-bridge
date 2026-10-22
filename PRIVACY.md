@@ -37,8 +37,8 @@ cookies or website storage. Snapshots exclude password inputs, hidden inputs and
 controls identified as token, secret or verification-code fields. This filtering
 does not guarantee that page text contains no sensitive information.
 
-The extension keeps manual approvals in memory and stores only the selected mode
-in extension-local settings. It does not read website storage or general browsing history. Its companion
+The extension keeps manual approvals in memory and stores the selected mode
+and optional Google account selection choice in extension-local settings. It does not read website storage or general browsing history. Its companion
 application relays messages locally. Your chosen MCP/AI client may retain page
 content or send it to its service provider: consult that client's privacy settings
 and policy before approving sensitive tabs. No claim of end-to-end local-only AI
@@ -83,3 +83,17 @@ document identity, readiness and active tab/window identifiers. An explicit focu
 request activates an approved tab and brings its Firefox window forward. Wait
 requests only observe a named control for up to ten seconds; they do not repeat
 website actions. These features require no additional permissions.
+
+## Optional Google account selection
+
+Off by default, a separate popup checkbox lets the connected MCP client select
+an existing account on an approved `https://accounts.google.com` account chooser.
+Account names and addresses already visible in page text become labeled click
+targets; clicking can sign you into the requesting website. No credentials or
+cookies are read. Password, token and verification-code controls stay filtered,
+and CAPTCHA remains manual. This option grants no website access by itself.
+
+The boolean choice persists in extension-local settings across restarts. Only
+the extension popup can change it; native requests cannot enable it. Disabling
+it blocks subsequent account-row actions, including previously observed child
+selectors. It does not sign you out or undo a completed sign-in.
