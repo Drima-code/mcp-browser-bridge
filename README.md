@@ -121,6 +121,11 @@ and [activeTab permissions](https://developer.mozilla.org/en-US/docs/Mozilla/Add
 
 ## Development
 
+Claude and Codex entry points are [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md).
+On David's workstation they route to shared coordination in a sibling private
+checkout when available. Public contributors can follow the ordinary development
+instructions below without that checkout.
+
 ```bash
 uv sync --frozen --group dev
 uv run --frozen playwright install firefox --no-shell

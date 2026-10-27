@@ -1,3 +1,17 @@
+# Agent handoff documentation — 2026-10-27
+
+Added CLAUDE.md and an AGENTS.md route to the shared coordination protocol when
+the sibling private job-search checkout exists. Agents check recent work and
+cooperative repo/browser claims before changes, then record verification and the
+next action in that private journal. No candidate data belongs in this public repo.
+Documentation only: no runtime, addon permissions, version or packaged update changed.
+The private helper passed concurrency/journal tests and project MCP discovery.
+
+Normal Firefox addon/server 0.2.7 was observed working on October 27. This
+supersedes the older installed-0.2.6 note below; a live Google chooser action is
+still not established by that observation. Detailed private workflow evidence
+stays in the sibling repository. No bridge runtime test suite rerun for these docs.
+
 # Optional Google account selection — 2026-10-22
 
 Prepared 0.2.7. Adds an explicit popup checkbox, off by default, for selecting an
