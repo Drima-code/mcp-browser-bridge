@@ -44,10 +44,24 @@
     const googleAccountSelector = '[role="link"][data-identifier]';
     const googleAccountRow = e => location.origin === "https://accounts.google.com" &&
       ancestorMatches(e, googleAccountSelector);
+    const formField = 'input:not([type="hidden"]),textarea,select,[contenteditable="true"]';
+    // Unlabeled form fields: use the text of the nearest container that holds
+    // only this field (a typical question wrapper). Display metadata only.
+    const containerLabel = e => {
+      if (!e.matches(formField)) return "";
+      let node = e.parentElement;
+      for (let depth = 0; node && depth < 4 && node !== document.body; depth++, node = node.parentElement) {
+        if (node.querySelectorAll(formField).length !== 1) return "";
+        const text = node.innerText?.trim();
+        if (text) return text.slice(0,180);
+      }
+      return "";
+    };
     const label = e => e.getAttribute("aria-label") ||
       (e.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
         .map(id => e.getRootNode().getElementById(id)?.innerText || "").join(" ").trim() ||
-      Array.from(e.labels || []).map(l => l.innerText.trim()).join(" ") || e.innerText?.trim().slice(0,180) || "";
+      Array.from(e.labels || []).map(l => l.innerText.trim()).join(" ") || e.innerText?.trim().slice(0,180) ||
+      containerLabel(e) || "";
     function selector(e) {
       const root = e.getRootNode();
       let local;
@@ -67,7 +81,17 @@
     }
     const maxUploadBytes = 25 * 1024 * 1024;
     const maxChunkBytes = 96 * 1024;
-    const uploadVisible = e => visible(e) || Array.from(e.labels || []).some(visible);
+    // Drop zones often hide the input inside a visible container. Accept the
+    // nearest visible ancestor (3 levels) only when it owns no other file input.
+    const dropZoneVisible = e => {
+      let node = e.parentElement;
+      for (let depth = 0; node && depth < 3 && node !== document.body; depth++, node = node.parentElement) {
+        if (node.querySelectorAll('input[type="file"]').length !== 1) return false;
+        if (visible(node) && node.innerText?.trim()) return true;
+      }
+      return false;
+    };
+    const uploadVisible = e => visible(e) || Array.from(e.labels || []).some(visible) || dropZoneVisible(e);
     function fileTarget(target) {
       const elements = query(target);
       if (elements.length !== 1) throw new Error(`Expected exactly one file input; got ${elements.length}`);
@@ -201,13 +225,22 @@
         'input,textarea,select,button,a,label,[contenteditable=true],[role=button],[role=checkbox],[role=radio],[role=combobox],[role=option]' +
         (request.google_account_selection === true && location.origin === "https://accounts.google.com" ?
           ',' + googleAccountSelector : '');
+      // Custom dropdowns (Chosen, BambooHR, many React selects) render options as
+      // plain leaf items inside a list/popup container. Expose them as role "option".
+      const optionContainer = '[role=listbox],[role=menu],ul[class*="result" i],ul[class*="option" i],' +
+        '[class*="dropdown" i],[class*="menu" i],[class*="suggest" i],[class*="autocomplete" i],[class*="options" i]';
+      const optionLike = e => !e.matches(controlSelector) && e.matches('li,[class*="option" i],[class*="result" i]') &&
+        !e.querySelector(controlSelector + ',li') && (e.innerText || "").trim().length > 0 &&
+        (e.innerText || "").trim().length <= 200 && !!e.parentElement?.closest(optionContainer);
+      const optionCandidates = deepQuery(root, 'li,[class*="option" i],[class*="result" i]').filter(optionLike);
       const candidates = [ ...(root?.matches(controlSelector) ? [root] : []),
-        ...deepQuery(root, controlSelector)
+        ...deepQuery(root, controlSelector), ...optionCandidates
       ].filter(e => (visible(e) || (e.type === "file" && uploadVisible(e))) && !sensitive(e) &&
         (!googleAccountRow(e) || request.google_account_selection === true));
       const page = candidates.slice(offset,offset+limit).map(e => ({
         selector: selector(e), tag: e.tagName.toLowerCase(), id: e.id.slice(0,256),
-        name: (e.name || "").slice(0,256), type: e.type || "", role: e.getAttribute("role") || "",
+        name: (e.name || "").slice(0,256), type: e.type || "",
+        role: e.getAttribute("role") || (optionCandidates.includes(e) ? "option" : ""),
         label: label(e).slice(0,400), placeholder: (e.getAttribute("placeholder") || "").slice(0,256),
         value: e.matches("input,textarea,select") && e.type !== "file" ? e.value.slice(0,1024) : undefined,
         value_truncated: e.matches("input,textarea,select") && e.type !== "file" && e.value.length > 1024,
@@ -217,6 +250,8 @@
         selected: e.hasAttribute("aria-selected") ? e.getAttribute("aria-selected") === "true" : undefined,
         aria_hidden: ariaHidden(e),
         aria_controls: e.getAttribute("aria-controls")?.slice(0,256),
+        // Link target without query/fragment, so signed or tokenized URLs never leak.
+        href: e.tagName === "A" && /^https?:$/.test(e.protocol || "") ? (e.origin + e.pathname).slice(0,512) : undefined,
         accept: e.type === "file" ? e.accept : undefined,
         multiple: e.type === "file" ? e.multiple : undefined,
         files: e.type === "file" ? Array.from(e.files).map(f => f.name.slice(0,256)) : undefined,
@@ -288,8 +323,32 @@
           range.selectNodeContents(e);
           const selection = window.getSelection();
           selection.removeAllRanges(); selection.addRange(range);
-          if (!document.execCommand(value ? "insertText" : "delete", false, value))
-            throw new Error("Browser editing command failed; inspect field before retrying");
+          // Lexical/ProseMirror-style editors read the DOM selection from the
+          // asynchronous selectionchange event, and Firefox fires no beforeinput
+          // for execCommand. Once the selection is known, offer the editor one
+          // cancelable beforeinput; only if unhandled, edit natively (which fires
+          // the input event such editors also observe).
+          const url = location.href;
+          const settle = () => new Promise(resolve => window.setTimeout(resolve, 50));
+          const ensureEditor = () => {
+            if (window.document !== document || location.href !== url || !e.isConnected || !visible(e) || disabled(e))
+              throw new Error("Editor changed during text insertion; inspect before retrying");
+          };
+          return settle().then(() => {
+            ensureEditor();
+            const inputType = value ? "insertText" : "deleteContentBackward";
+            const before = new InputEvent("beforeinput", {inputType, data:value || null,
+              bubbles:true, cancelable:true, composed:true});
+            if (e.dispatchEvent(before) && !document.execCommand(value ? "insertText" : "delete", false, value))
+              throw new Error("Browser editing command failed; inspect field before retrying");
+            return settle();
+          }).then(() => {
+            ensureEditor();
+            const normalize = text => text.replace(/\s+/g, " ").trim();
+            if (normalize(e.innerText) !== normalize(value))
+              throw new Error("Editor did not retain the requested text; inspect before retrying");
+            return {ok:true, notice:"Action invoked once; inspect receipt before claiming submission. No automatic retry."};
+          });
         } else {
           if (!e.matches("input,textarea") || ["file","checkbox","radio","button","submit","reset","image"].includes(e.type))
             throw new Error("Not a text control");

@@ -293,3 +293,94 @@ async def test_google_account_popup_setting_and_failed_save():
         await page.wait_for_function("document.querySelector('#error').textContent.includes('storage failure')")
         assert not await option.is_checked()
         await browser.close()
+
+
+async def test_dropzone_hidden_file_input_and_unlabeled_question_fields():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(
+            '<form><div class="q"><p>Explain your experience? *</p><div><textarea id="answer"></textarea></div></div>'
+            '<div class="q"><p>Resume *</p><div id="zone">Drag and drop file or browse'
+            '<input id="cv" type="file" style="display:none"></div></div>'
+            '<div id="twin">Two inputs<input id="a" type="file" style="display:none">'
+            '<input id="b" type="file" style="display:none"></div>'
+            '<div style="display:none"><input id="ghost" type="file"></div></form>')
+        await install(page)
+        result = await snapshot(page)
+        answer = next(c for c in result['controls'] if c['selector'] == '#answer')
+        assert answer['label'] == 'Explain your experience? *'
+        meta = {'name': 'cv.txt', 'size': 3, 'type': 'text/plain', 'last_modified': 0}
+        begin = await page.evaluate('r=>handler(r)', {'drima': True, 'op': 'upload_begin', 'selector': '#cv', 'files': [meta]})
+        ctx = {'drima': True, 'upload_id': begin['upload_id']}
+        await page.evaluate('r=>handler(r)', {**ctx, 'op': 'upload_chunk', 'file_index': 0, 'offset': 0, 'data': 'YWJj'})
+        await page.evaluate('r=>handler(r)', {**ctx, 'op': 'upload_commit'})
+        assert await page.evaluate("document.querySelector('#cv').files[0].text()") == 'abc'
+        # Ambiguous zones (two inputs) and invisible containers stay rejected.
+        for target in ('#a', '#ghost'):
+            with pytest.raises(Exception, match='visible control or label'):
+                await page.evaluate('r=>handler(r)', {'drima': True, 'op': 'upload_begin', 'selector': target, 'files': [meta]})
+        await browser.close()
+
+
+async def test_contenteditable_fill_waits_for_async_editor_selection():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        # Emulates Lexical: model text changes only through beforeinput, using the
+        # selection learned from the asynchronous selectionchange event.
+        await page.set_content('''<form><div id="ed" contenteditable="true">old text</div>
+          <input type="hidden" name="answer" value="old text"></form><script>
+          const ed=document.querySelector('#ed'), field=document.querySelector('[name=answer]');
+          let known=null;
+          document.addEventListener('selectionchange',()=>{const s=getSelection();
+            known=s.rangeCount&&ed.contains(s.anchorNode)?s.toString():null;});
+          const apply=data=>{const text=known===ed.textContent?data:ed.textContent+data;
+            ed.textContent=text; field.value=text;};
+          ed.addEventListener('beforeinput',ev=>{ev.preventDefault();
+            if(known!==null&&ev.inputType==='insertText')apply(ev.data);});
+          // Native DOM edits that bypass the editor are reverted from the model.
+          new MutationObserver(()=>{if(ed.textContent!==field.value)ed.textContent=field.value;})
+            .observe(ed,{childList:true,characterData:true,subtree:true});
+        </script>''')
+        await install(page)
+        await page.evaluate("r=>handler(r)", {'drima': True, 'op': 'act', 'action': 'fill',
+                                              'selector': '#ed', 'value': 'nuevo texto'})
+        assert await page.evaluate("document.querySelector('[name=answer]').value") == 'nuevo texto'
+        await browser.close()
+
+
+async def test_link_href_is_exposed_without_query_or_fragment():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.route('http://bridge.test/**', lambda route: route.fulfill(content_type='text/html', body=
+            '<a id="apply" href="/jobs/x/applications/new?token=secret#top">Apply now</a>'
+            '<a id="js" href="javascript:void(0)">Script</a>'))
+        await page.goto('http://bridge.test/')
+        await install(page)
+        controls = {c['selector']: c for c in (await snapshot(page))['controls']}
+        assert controls['#apply']['href'] == 'http://bridge.test/jobs/x/applications/new'
+        assert 'href' not in controls['#js'] or controls['#js']['href'] is None
+        await browser.close()
+
+
+async def test_custom_dropdown_leaf_options_are_discoverable_and_clickable():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(
+            '<div class="chosen-container"><input class="chosen-search-input">'
+            '<ul class="chosen-results"><li class="active-result" onclick="window.picked=this.textContent">CV English</li>'
+            '<li class="active-result" onclick="window.picked=this.textContent">CV Espanol</li></ul></div>'
+            '<div class="fab-Dropdown"><div class="fab-MenuOption" onclick="window.country=this.textContent">Chile</div></div>'
+            '<ul class="nav"><li>Plain navigation text</li></ul>'
+            '<div class="dropdown" style="display:none"><li>Hidden option</li></div>')
+        await install(page)
+        controls = (await snapshot(page))['controls']
+        options = [c for c in controls if c['role'] == 'option']
+        assert [c['label'] for c in options] == ['CV English', 'CV Espanol', 'Chile']
+        for option in options[1:]:
+            await page.evaluate("s=>handler({drima:true,op:'act',action:'click',selector:s})", option['selector'])
+        assert await page.evaluate('[window.picked, window.country]') == ['CV Espanol', 'Chile']
+        await browser.close()
