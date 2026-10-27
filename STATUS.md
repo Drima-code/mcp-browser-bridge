@@ -1,3 +1,28 @@
+# Form discovery and editor update 0.2.8 — 2026-10-27
+
+Prepared 0.2.8 from live friction observed during normal-Firefox use (details of
+the sites stay private). Changes in extension/content.js:
+- File inputs hidden inside a visible drop zone are accepted when the nearest
+  visible container (3 levels) owns exactly one file input. Ambiguous zones and
+  invisible containers stay rejected.
+- Leaf items inside list/popup containers (Chosen results, BambooHR-style menus,
+  role=listbox/menu, dropdown/suggest/autocomplete classes) are exposed with
+  role "option" and remain single-click targets with existing visibility checks.
+- Unlabeled form fields use the text of their single-field question container.
+- Links report href as origin + path only; queries and fragments never leave.
+- Contenteditable fill waits for selectionchange, offers one cancelable
+  beforeinput(insertText), edits natively only if unhandled, and verifies the
+  editor retained the text. Firefox fires no beforeinput for execCommand, which
+  left Lexical-based editors (Lexxy) visually changed but unsaved.
+
+Validation: 40 tests pass (4 new synthetic regressions, incl. a Lexical-like
+async-selection editor). Ruff, JS syntax and Mozilla lint (0 errors/warnings/
+notices) pass. Installed-addon smoke in a disposable profile passes. Live Lexxy
+persistence is NOT yet observed; verify on the next real form after install.
+Unsigned archive: artifacts/mcp-browser-bridge-0.2.8.zip (8 assets)
+SHA256: 45c8178ea1f59f11dbe4975cb256bacff674981dfa117950ff3116d3755437d0
+Installed normal Firefox remains 0.2.7 until David signs/installs.
+
 # Agent handoff documentation — 2026-10-27
 
 Added CLAUDE.md and an AGENTS.md route to the shared coordination protocol when

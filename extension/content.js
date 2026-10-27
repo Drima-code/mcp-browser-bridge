@@ -409,7 +409,7 @@
     if (!request.drima) return;
     if (request.expected_url && location.href !== request.expected_url)
       throw new Error("Tab navigated; inspect before retrying");
-    if (request.op === "content_status") return Promise.resolve({content_version:"0.2.7"});
+    if (request.op === "content_status") return Promise.resolve({content_version:"0.2.8"});
     const path = request.frame_path || [];
     if (!Array.isArray(path) || path.length > 8 || path.some(s => typeof s !== "string"))
       throw new Error("Invalid frame_path (maximum 8 observed selectors)");

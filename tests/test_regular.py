@@ -176,10 +176,10 @@ const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconne
 const browser={windows:{update:async(id,r)=>{assert.equal(r.focused,true);windowFocus++;}},
  tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},
  update:async(id,r)=>{assert.equal(r.active,true);activations++;tabs.get(id).active=true;},
- sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.2.7'}:{ok:true}},
+ sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.2.8'}:{ok:true}},
  query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),
  onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.2.7'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.2.8'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
  permissions:{contains:async()=>granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>settings,set:async s=>{settings={...settings,...s}}}},
  browserAction:{setBadgeText:async()=>{}}};
@@ -519,7 +519,7 @@ async def test_chunked_upload_to_real_firefox_file_input(tmp_path, monkeypatch):
             calls.append(payload)
             assert len(json.dumps(payload).encode()) < 256 * 1024
             if payload['op'] == 'status':
-                return {'protocol_version': 1, 'addon_version': '0.2.7', 'capabilities': ['upload']}
+                return {'protocol_version': 1, 'addon_version': '0.2.8', 'capabilities': ['upload']}
             return await page.evaluate('r=>handler({drima:true,...r})', payload)
         monkeypatch.setattr(regular, 'request', bridge)
         result = await regular.upload('7', '#cv', [str(path)])
@@ -589,7 +589,7 @@ async def test_upload_path_limits_and_unknown_commit(tmp_path, monkeypatch):
     async def fake(payload):
         calls.append(payload)
         if payload['op'] == 'status':
-            return {'protocol_version': 1, 'addon_version': '0.2.7', 'capabilities': ['upload']}
+            return {'protocol_version': 1, 'addon_version': '0.2.8', 'capabilities': ['upload']}
         if payload['op'] == 'upload_begin':
             return {'upload_id': 'test'}
         if payload['op'] == 'upload_commit':

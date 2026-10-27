@@ -242,7 +242,9 @@ def create_regular_server():
         Addon 0.2.6 supports open shadow selectors separated by ' >>> ', frame
         inventory and explicit same-origin frame_path descent. Returned document_id
         can guard later operations against document replacement. Closed shadow
-        roots and cross-origin frames remain inaccessible.
+        roots and cross-origin frames remain inaccessible. Addon 0.2.8 lists
+        custom dropdown items as role "option", labels unlabeled fields from their
+        question container and reports link href without query or fragment.
         """
         return await checked_request(
             {"op": "snapshot", "tab_id": tab_id, "max_chars": max_chars,
