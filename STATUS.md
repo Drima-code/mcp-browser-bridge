@@ -1,3 +1,10 @@
+# Version 0.3.1 — 2026-10-28
+
+David had already uploaded 0.3.0 to AMO, so the screenshot build ships as 0.3.1
+(same code as the final 0.3.0 tree plus version strings). Verified: 50 tests,
+ruff, web-ext lint 0/0/0. Unsigned archive: artifacts/mcp-browser-bridge-0.3.1.zip
+(SHA256 56509c175827463fe33ae48c697dca97a5315c18c37c8c713aa428df0b48c69d).
+
 # Agent window, keyboard and refs 0.3.0 — 2026-10-28
 
 Compared against Mozilla firefox-devtools-mcp, Blueprint MCP, Foxhand,

@@ -491,7 +491,7 @@
     if (!request.drima) return;
     if (request.expected_url && location.href !== request.expected_url)
       throw new Error("Tab navigated; inspect before retrying");
-    if (request.op === "content_status") return Promise.resolve({content_version:"0.3.0"});
+    if (request.op === "content_status") return Promise.resolve({content_version:"0.3.1"});
     if (request.op === "attention_mark" || request.op === "attention_unmark") {
       if (window !== window.top) return;
       return Promise.resolve(request.op === "attention_mark" ? markAttention(request.reason) : unmarkAttention());

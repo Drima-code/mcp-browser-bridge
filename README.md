@@ -282,7 +282,7 @@ site beyond the title text, and disappear when the tab closes.
   `upload` and `scope` accept in place of a CSS selector. Refs belong to one
   document and fail as stale after it changes. `compact=True` (the MCP default)
   omits empty fields and long positional selectors.
-- `regular_browser_screenshot(tab_id)` returns a JPEG of the visible area of an
+- `regular_browser_screenshot(tab_id)` (0.3.1) returns a JPEG of the visible area of an
   allowed tab that is shown in its window. Off by default: the popup's "Enable
   screenshots…" grants Firefox's `<all_urls>` permission, which
   `captureVisibleTab` requires; tab access is still decided by the access mode.

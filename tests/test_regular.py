@@ -207,10 +207,10 @@ const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconne
 const browser={windows:{update:async(id,r)=>{assert.equal(r.focused,true);windowFocus++;}},
  tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},
  update:async(id,r)=>{assert.equal(r.active,true);activations++;tabs.get(id).active=true;},
- sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.3.0'}:{ok:true}},
+ sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.3.1'}:{ok:true}},
  query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),
  onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.3.0'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.3.1'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
  permissions:{contains:async()=>granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>settings,set:async s=>{settings={...settings,...s}}}},
  browserAction:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
@@ -550,7 +550,7 @@ async def test_chunked_upload_to_real_firefox_file_input(tmp_path, monkeypatch):
             calls.append(payload)
             assert len(json.dumps(payload).encode()) < 256 * 1024
             if payload['op'] == 'status':
-                return {'protocol_version': 1, 'addon_version': '0.3.0', 'capabilities': ['upload']}
+                return {'protocol_version': 1, 'addon_version': '0.3.1', 'capabilities': ['upload']}
             return await page.evaluate('r=>handler({drima:true,...r})', payload)
         monkeypatch.setattr(regular, 'request', bridge)
         result = await regular.upload('7', '#cv', [str(path)])
@@ -620,7 +620,7 @@ async def test_upload_path_limits_and_unknown_commit(tmp_path, monkeypatch):
     async def fake(payload):
         calls.append(payload)
         if payload['op'] == 'status':
-            return {'protocol_version': 1, 'addon_version': '0.3.0', 'capabilities': ['upload']}
+            return {'protocol_version': 1, 'addon_version': '0.3.1', 'capabilities': ['upload']}
         if payload['op'] == 'upload_begin':
             return {'upload_id': 'test'}
         if payload['op'] == 'upload_commit':
@@ -672,9 +672,9 @@ const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconne
 const browser={windows:{update:async()=>{}},
  tabs:{get:async id=>{if(!tabs.has(id))throw new Error('no tab');return tabs.get(id)},executeScript:async()=>{},
   update:async id=>{activations++;},remove:async id=>{tabs.delete(id);events.removed(id);},
-  sendMessage:async(id,r,o)=>{sent.push({id,r,o});return r.op==='content_status'?{content_version:'0.3.0'}:{ok:true}},
+  sendMessage:async(id,r,o)=>{sent.push({id,r,o});return r.op==='content_status'?{content_version:'0.3.1'}:{ok:true}},
   query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.3.0'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.3.1'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
  permissions:{contains:async p=>p.permissions?.[0]==='notifications'?notifications:granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>({mode:'all'}),set:async()=>{}}},
  notifications:{create:async(id,o)=>notes.push([id,o]),clear:async id=>cleared.push(id),onClicked:event('noteClicked')},
@@ -749,9 +749,9 @@ const browser={windows:{update:async()=>{},get:async id=>{if(!windows.has(id))th
   create:async o=>{calls.push(['tab',o]);return mk(o.url,o.windowId)},
   update:async(id,o)=>{calls.push(['update',id,o]);if(o.url)tabs.get(id).url=o.url;},
   goBack:async id=>calls.push(['back',id]),goForward:async id=>calls.push(['forward',id]),reload:async id=>calls.push(['reload',id]),
-  sendMessage:async()=>({content_version:'0.3.0'}),query:async q=>Array.from(tabs.values()),
+  sendMessage:async()=>({content_version:'0.3.1'}),query:async q=>Array.from(tabs.values()),
   onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.3.0'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.3.1'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
  permissions:{contains:async p=>p.permissions?false:granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>({mode:storedMode}),set:async()=>{}}},
  browserAction:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
@@ -807,8 +807,8 @@ const browser={windows:{update:async()=>{}},
  tabs:{get:async id=>{if(!tabs.has(id))throw new Error('no tab');return {...tabs.get(id)}},executeScript:async()=>{},
   captureVisibleTab:async(w,o)=>{captures.push([w,o]);if(swapDuring)tabs.get(1).url='https://jobs.example/sent';
    return 'data:image/jpeg;base64,'+(big-->0?'A'.repeat(300000):'QUJD');},
-  sendMessage:async()=>({content_version:'0.3.0'}),query:async()=>Array.from(tabs.values()),onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.3.0'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
+  sendMessage:async()=>({content_version:'0.3.1'}),query:async()=>Array.from(tabs.values()),onRemoved:event('removed'),onUpdated:event('updated')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.3.1'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
  permissions:{contains:async p=>p.origins?.[0]==='<all_urls>'?shots:!p.permissions,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>({mode:'all'}),set:async()=>{}}},
  browserAction:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
@@ -845,13 +845,13 @@ async def test_popup_screenshot_permission_request_and_revoke():
         await page.evaluate("""() => {
           window.calls=[];window.grant=false;window.shots=false;
           window.browser={runtime:{sendMessage:async r=>{calls.push({ui:r.ui});
-            if(r.ui==='state')return {mode:'all',eligible:true,connected:true,addonVersion:'0.3.0',
+            if(r.ui==='state')return {mode:'all',eligible:true,connected:true,addonVersion:'0.3.1',
               screenshotsPermission:shots,attention:[]};return {ok:true};}},
             permissions:{request:async q=>{calls.push({request:q});shots=grant;return grant;},
               remove:async q=>{calls.push({remove:q});shots=false;return true;}}};
         }""")
         await page.evaluate((extension / "popup.js").read_text())
-        await page.wait_for_function("document.querySelector('#status').textContent.includes('0.3.0')")
+        await page.wait_for_function("document.querySelector('#status').textContent.includes('0.3.1')")
         assert await page.evaluate("document.querySelector('#screenshots-off').disabled")
         await page.locator("#screenshots").click()
         await page.wait_for_function("document.querySelector('#error').textContent.includes('denied')")
@@ -886,7 +886,7 @@ async def test_popup_lists_waiting_tabs_as_text_with_go_and_done():
         await page.evaluate("""() => {
           window.calls=[];window.flags=[{tab_id:'4',title:'<img src=x onerror=window.pwned=1>Apply',url:'https://a.example/',reason:'CAPTCHA'}];
           window.browser={runtime:{sendMessage:async r=>{calls.push(r);
-            if(r.ui==='state')return {mode:'manual',eligible:false,connected:true,addonVersion:'0.3.0',attention:flags};
+            if(r.ui==='state')return {mode:'manual',eligible:false,connected:true,addonVersion:'0.3.1',attention:flags};
             if(r.ui==='attention-done')flags=[];
             return {ok:true};}},permissions:{request:async()=>false,remove:async()=>true}};
         }""")
