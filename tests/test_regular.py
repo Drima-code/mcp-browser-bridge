@@ -207,10 +207,10 @@ const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconne
 const browser={windows:{update:async(id,r)=>{assert.equal(r.focused,true);windowFocus++;}},
  tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},
  update:async(id,r)=>{assert.equal(r.active,true);activations++;tabs.get(id).active=true;},
- sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.2.9'}:{ok:true}},
+ sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.2.10'}:{ok:true}},
  query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),
  onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.2.9'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.2.10'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
  permissions:{contains:async()=>granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>settings,set:async s=>{settings={...settings,...s}}}},
  browserAction:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
@@ -550,7 +550,7 @@ async def test_chunked_upload_to_real_firefox_file_input(tmp_path, monkeypatch):
             calls.append(payload)
             assert len(json.dumps(payload).encode()) < 256 * 1024
             if payload['op'] == 'status':
-                return {'protocol_version': 1, 'addon_version': '0.2.9', 'capabilities': ['upload']}
+                return {'protocol_version': 1, 'addon_version': '0.2.10', 'capabilities': ['upload']}
             return await page.evaluate('r=>handler({drima:true,...r})', payload)
         monkeypatch.setattr(regular, 'request', bridge)
         result = await regular.upload('7', '#cv', [str(path)])
@@ -620,7 +620,7 @@ async def test_upload_path_limits_and_unknown_commit(tmp_path, monkeypatch):
     async def fake(payload):
         calls.append(payload)
         if payload['op'] == 'status':
-            return {'protocol_version': 1, 'addon_version': '0.2.9', 'capabilities': ['upload']}
+            return {'protocol_version': 1, 'addon_version': '0.2.10', 'capabilities': ['upload']}
         if payload['op'] == 'upload_begin':
             return {'upload_id': 'test'}
         if payload['op'] == 'upload_commit':
@@ -671,10 +671,10 @@ const event=name=>({addListener:fn=>events[name]=fn});
 const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconnect'),postMessage:m=>messages.push(m)};
 const browser={windows:{update:async()=>{}},
  tabs:{get:async id=>{if(!tabs.has(id))throw new Error('no tab');return tabs.get(id)},executeScript:async()=>{},
-  update:async id=>{activations++;},
-  sendMessage:async(id,r,o)=>{sent.push({id,r,o});return r.op==='content_status'?{content_version:'0.2.9'}:{ok:true}},
+  update:async id=>{activations++;},remove:async id=>{tabs.delete(id);events.removed(id);},
+  sendMessage:async(id,r,o)=>{sent.push({id,r,o});return r.op==='content_status'?{content_version:'0.2.10'}:{ok:true}},
   query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.2.9'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.2.10'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
  permissions:{contains:async p=>p.permissions?.[0]==='notifications'?notifications:granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>({mode:'all'}),set:async()=>{}}},
  notifications:{create:async(id,o)=>notes.push([id,o]),clear:async id=>cleared.push(id),onClicked:event('noteClicked')},
@@ -719,6 +719,12 @@ const call=async r=>{await listener({id:'x',...r});return messages.at(-1)};
  assert.equal((await call({op:'attention',action:'list'})).result.tabs.length,0);
  assert.equal(badges.filter(b=>b.tabId===undefined).at(-1).text,'ALL');
  r=(await call({op:'attention',action:'clear',tab_id:'1'})).result; assert.equal(r.cleared,false);
+ // Close removes one approved tab and its flag; unknown tabs fail without side effects.
+ assert((await call({op:'status'})).result.capabilities.includes('close'));
+ await call({op:'attention',action:'set',tab_id:'1',reason:'Done soon'});
+ r=(await call({op:'close',tab_id:'1'})).result; assert.equal(r.closed,true); assert(!tabs.has(1));
+ assert.equal((await call({op:'attention',action:'list'})).result.tabs.length,0);
+ assert((await call({op:'close',tab_id:'1'})).error);
  console.log('ok');
 })().catch(e=>{console.error(e);process.exit(1)});
 """
@@ -736,7 +742,7 @@ async def test_popup_lists_waiting_tabs_as_text_with_go_and_done():
         await page.evaluate("""() => {
           window.calls=[];window.flags=[{tab_id:'4',title:'<img src=x onerror=window.pwned=1>Apply',url:'https://a.example/',reason:'CAPTCHA'}];
           window.browser={runtime:{sendMessage:async r=>{calls.push(r);
-            if(r.ui==='state')return {mode:'manual',eligible:false,connected:true,addonVersion:'0.2.9',attention:flags};
+            if(r.ui==='state')return {mode:'manual',eligible:false,connected:true,addonVersion:'0.2.10',attention:flags};
             if(r.ui==='attention-done')flags=[];
             return {ok:true};}},permissions:{request:async()=>false,remove:async()=>true}};
         }""")

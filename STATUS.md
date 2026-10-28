@@ -1,3 +1,11 @@
+# Tab close 0.2.10 — 2026-10-28
+
+New `close` operation and `regular_browser_close(tab_id)` tool: closes one
+allowed website tab once (no retry); onRemoved clears its attention flag. Capability
+`close`. No new permissions. Verified: 44 tests, ruff, web-ext lint 0/0/0.
+Unsigned archive: artifacts/mcp-browser-bridge-0.2.10.zip
+(SHA256 a01aab343140cf7d205b2ed55c17aefcd22a0101b819b63345772c9bf632b45e).
+
 # Native host profile routes — 2026-10-28
 
 Profiles opened from Firefox's profile switcher ("Work", `Tez9hEU9.Profile 4`)

@@ -210,6 +210,11 @@ def create_regular_server():
         return await checked_request({"op": "focus", "tab_id": tab_id})
 
     @server.tool()
+    async def regular_browser_close(tab_id: str):
+        """Close one approved website tab that is no longer needed. Addon 0.2.10+. No retry."""
+        return await checked_request({"op": "close", "tab_id": tab_id}, ("close",))
+
+    @server.tool()
     async def regular_browser_wait(
         tab_id: str, selector: str,
         state: Literal["visible", "hidden", "attached", "detached"] = "visible",

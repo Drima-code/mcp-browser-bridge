@@ -13,8 +13,8 @@ function eligible(tab) {
 function origin(url) { return new URL(url).origin; }
 function safeUrl(url) { const u = new URL(url); return u.origin + u.pathname; }
 const PROTOCOL_VERSION = 1;
-const CONTENT_VERSION = "0.2.9";
-const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention"];
+const CONTENT_VERSION = "0.2.10";
+const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close"];
 // Tabs an agent flagged for the user (CAPTCHA, login, a decision). In memory only.
 const attention = new Map();
 let notificationListener = false;
@@ -280,6 +280,11 @@ async function dispatch(request) {
   if (request.op === "focus") {
     const current = await focusTab(id);
     return {tab_id:String(id),active:true,window_id:current.windowId,notice:"Tab and window activated once."};
+  }
+  if (request.op === "close") {
+    // Approved website tabs only (checked above); onRemoved drops approval and flags.
+    await browser.tabs.remove(id);
+    return {tab_id:String(id),closed:true,notice:"Tab closed once. No retry."};
   }
   if (request.op === "attention") return attentionOperation(request,tab);
   if (request.op === "status") return status(tab);
