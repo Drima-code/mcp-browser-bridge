@@ -21,6 +21,12 @@ page text. Requested form actions and their results also pass through
 the bridge. Approving a tab permits the connected client to read and interact with
 that tab; it is not a read-only permission.
 
+In automatic access mode the connected client can also open http/https pages in a
+separate window reserved for it, and load, reload or go back and forward in tabs
+it may already use. It can close those tabs. The page addresses it requests are
+sent to the websites concerned, as with any navigation. In manual mode it cannot
+open pages; navigating an approved tab to another website ends that tab's approval.
+
 When the local MCP client explicitly requests a file upload, the companion reads
 only the named absolute local files and sends their bytes and base filenames in
 bounded chunks to the approved tab. Absolute paths are not sent to the extension

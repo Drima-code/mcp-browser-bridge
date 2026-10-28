@@ -269,6 +269,24 @@ popup; `focus=true` also activates the tab once. `action="clear"` removes a flag
 and `action="list"` returns flagged tabs. Flags live in memory, never touch the
 site beyond the title text, and disappear when the tab closes.
 
+## Agent window, keyboard and short refs (0.3.0)
+
+- `regular_browser_open(url)` opens an http(s) page in one Firefox window reserved
+  for the agent, so pages never land in the user's own windows. It works only in
+  automatic access mode; in manual mode the user opens and approves pages. `tabs`
+  marks agent-window tabs with `agent_window: true`.
+- `regular_browser_navigate(tab_id, action, url)` loads a URL in an allowed tab or
+  goes back, forward or reloads. Manual approval still ends on origin change.
+- `regular_browser_close(tab_id)` closes an allowed tab that is no longer needed.
+- Snapshots give every control a short `ref` (`ref=e12`) that `act`, `wait`,
+  `upload` and `scope` accept in place of a CSS selector. Refs belong to one
+  document and fail as stale after it changes. `compact=True` (the MCP default)
+  omits empty fields and long positional selectors.
+- `act` gains `press` (one allowlisted key: Enter, Escape, arrows, Backspace,
+  Delete, Home, End, PageUp, PageDown, space) and `type` (append up to 500
+  characters key by key, for fields that filter as you type). Synthetic keys reach
+  page handlers but never trigger native defaults such as form submission.
+
 ## Several Firefox profiles
 
 Each native host serves one socket at `$DRIMA_REGULAR_BROWSER_DATA/regular-browser.sock`

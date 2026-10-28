@@ -98,9 +98,14 @@ async def compatibility(tab_id=None, required=()):
 async def checked_request(payload, required=()):
     features = set(required)
     feature = {"snapshot": "snapshot_paging", "downloads": "download_watch",
-               "focus": "focus", "wait": "wait", "upload_begin": "upload"}.get(payload.get("op"))
+               "focus": "focus", "wait": "wait", "upload_begin": "upload",
+               "close": "close", "open": "open", "navigate": "navigate"}.get(payload.get("op"))
     if payload.get("op") == "act":
         feature = "hover" if payload.get("action") == "hover" else "act"
+        if payload.get("action") in ("press", "type"):
+            features.add("keyboard")
+    if str(payload.get("selector") or "").startswith("ref=") or payload.get("compact"):
+        features.add("refs")
     if feature:
         features.add(feature)
     if payload.get("frame_path"):
@@ -210,8 +215,29 @@ def create_regular_server():
         return await checked_request({"op": "focus", "tab_id": tab_id})
 
     @server.tool()
+    async def regular_browser_open(url: Annotated[str, Field(max_length=4096)]):
+        """Open an http(s) page in the agent's own Firefox window. Addon 0.3.0+.
+
+        Needs automatic access mode. Reuses one agent window so the user's windows
+        stay untouched. Opens once, no retry; wait for load, then snapshot.
+        """
+        return await checked_request({"op": "open", "url": url}, ("open",))
+
+    @server.tool()
+    async def regular_browser_navigate(
+        tab_id: str, action: Literal["url", "back", "forward", "reload"] = "url",
+        url: Annotated[str, Field(max_length=4096)] = "",
+    ):
+        """Load an http(s) URL in an allowed tab, or go back/forward/reload. Addon 0.3.0+.
+
+        Manual approval ends when the origin changes. Never use to resubmit a form.
+        """
+        return await checked_request({"op": "navigate", "tab_id": tab_id, "action": action, "url": url},
+                                     ("navigate",))
+
+    @server.tool()
     async def regular_browser_close(tab_id: str):
-        """Close one approved website tab that is no longer needed. Addon 0.2.10+. No retry."""
+        """Close one approved website tab that is no longer needed. Addon 0.3.0+. No retry."""
         return await checked_request({"op": "close", "tab_id": tab_id}, ("close",))
 
     @server.tool()
@@ -238,8 +264,13 @@ def create_regular_server():
         limit: Annotated[int, Field(ge=1, le=100)] = 100,
         frame_path: list[str] | None = None,
         document_id: str | None = None,
+        compact: bool = True,
     ):
         """Read a visible dialog or page, omitting password and token fields.
+
+        Addon 0.3.0: each control has a short ref ("ref=e12") usable anywhere a
+        selector is accepted, valid only for this document. compact=True (default)
+        drops empty fields and long positional selectors; set False for full CSS.
 
         Requires addon 0.2.5+ for scope/paging. Follow next_offset for omitted
         controls; use an observed CSS scope to inspect a viewer or toolbar.
@@ -254,18 +285,25 @@ def create_regular_server():
         return await checked_request(
             {"op": "snapshot", "tab_id": tab_id, "max_chars": max_chars,
              "scope": scope, "offset": offset, "limit": limit,
-             "frame_path": frame_path or [], "document_id": document_id}, ("snapshot_paging",)
+             "frame_path": frame_path or [], "document_id": document_id,
+             **({"compact": True} if compact else {})}, ("snapshot_paging",)
         )
 
     @server.tool()
     async def regular_browser_act(
         tab_id: str,
-        action: Literal["click", "fill", "select", "check", "uncheck", "hover"],
+        action: Literal["click", "fill", "select", "check", "uncheck", "hover", "press", "type"],
         selector: str,
         value: str = "",
         frame_path: list[str] | None = None, document_id: str | None = None,
     ):
-        """One action on exactly one visible observed CSS match. Credential fields blocked. No retries.
+        """One action on exactly one visible observed CSS match or snapshot ref. Credential fields blocked. No retries.
+
+        Addon 0.3.0: selector may be "ref=eN" from the latest snapshot. press sends
+        one key (value: Enter, Escape, ArrowDown/Up/Left/Right, Backspace, Delete,
+        Home, End, PageUp, PageDown or " ") to page handlers without native
+        defaults such as form submission. type appends up to 500 characters key by
+        key, for fields that filter as you type; fill replaces the value.
 
         Addon 0.2.7 can expose existing Google account chooser rows when the user
         enables that option in the extension popup. The client cannot enable it.

@@ -1,3 +1,18 @@
+# Agent window, keyboard and refs 0.3.0 — 2026-10-28
+
+Compared against Mozilla firefox-devtools-mcp, Blueprint MCP, Foxhand,
+foxwire, fxmcp and Playwright MCP extension mode; adopted the gaps that block
+form work. New: `open` (automatic mode only; one agent window, focused:false),
+`navigate` (url/back/forward/reload, http(s) only), `close`; act `press`
+(allowlisted keys, synthetic, no native defaults) and `type` (<=500 chars);
+per-document snapshot refs (`ref=eN`, stale after document change) and compact
+snapshots (MCP default). Capabilities: open, navigate, refs, keyboard, close.
+Screenshots deferred: captureVisibleTab needs `<all_urls>` (new permission).
+Verified: 47 tests, ruff, web-ext lint 0/0/0. No new permissions.
+Unsigned archive: artifacts/mcp-browser-bridge-0.3.0.zip
+(SHA256 ed54b8c9edaa726f33070f3efc2291b44f081cf0cdefbddde1189c1ea74ffba7).
+Supersedes the unsigned 0.2.10 archive.
+
 # Tab close 0.2.10 — 2026-10-28
 
 New `close` operation and `regular_browser_close(tab_id)` tool: closes one

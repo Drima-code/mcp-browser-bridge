@@ -400,3 +400,62 @@ async def test_attention_title_marker_survives_site_title_changes():
         await page.evaluate("handler({drima:true,op:'attention_unmark'})")
         assert await page.title() == 'Step 2'
         await browser.close()
+
+
+async def test_refs_compact_snapshot_and_stale_refs_after_document_change():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content('<div><div><form><label>Name <input name="n"></label>'
+                               '<button type="button" onclick="window.hit=(window.hit||0)+1">Next</button>'
+                               '<input id="short" value="kept"></form></div></div>')
+        await install(page)
+        full = (await snapshot(page))['controls']
+        assert all(c['ref'].startswith('ref=e') and c['selector'] for c in full)
+        compact = (await snapshot(page, compact=True))['controls']
+        button = next(c for c in compact if c['label'] == 'Next')
+        # Positional selectors are replaced by refs; short id selectors and refs stay stable.
+        assert 'selector' not in button and 'disabled' not in button and 'value' not in button
+        assert next(c for c in compact if c.get('id') == 'short')['selector'] == '#short'
+        assert [c['ref'] for c in compact] == [c['ref'] for c in full]
+        assert len(str(compact)) < len(str(full)) * 0.7
+        await page.evaluate("s=>handler({drima:true,op:'act',action:'click',selector:s})", button['ref'])
+        await page.evaluate("s=>handler({drima:true,op:'act',action:'fill',selector:s,value:'Ana'})",
+                            next(c['ref'] for c in compact if c.get('name') == 'n'))
+        assert await page.evaluate('[window.hit, document.querySelector("[name=n]").value]') == [1, 'Ana']
+        await page.evaluate('document.querySelector("button").remove()')
+        with pytest.raises(Exception, match='stale ref'):
+            await page.evaluate("s=>handler({drima:true,op:'act',action:'click',selector:s})", button['ref'])
+        await browser.close()
+
+
+async def test_type_filters_and_press_picks_option_without_native_submit():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(
+            '<form onsubmit="window.submitted=true;return false"><input id="q" autocomplete="off">'
+            '<ul class="results"></ul><input type="password" id="pw"></form>'
+            '<script>const all=["CV English","CV Español IA","CV Español IA — TCIT"];let active=0;'
+            'q.addEventListener("input",()=>{const m=all.filter(x=>x.toLowerCase().includes(q.value.toLowerCase()));'
+            'document.querySelector(".results").innerHTML=m.map(x=>"<li>"+x+"</li>").join("");active=0;});'
+            'q.addEventListener("keydown",e=>{if(e.keyCode===40)active++;'
+            'if(e.key==="Enter"){e.preventDefault();window.picked=document.querySelectorAll(".results li")[active].textContent;}'
+            'if(e.key==="Escape")window.escaped=true;});</script>')
+        await install(page)
+        act = "r=>handler({drima:true,op:'act',...r})"
+        result = await page.evaluate(act, {'action': 'type', 'selector': '#q', 'value': 'Español'})
+        assert result['ok'] and await page.input_value('#q') == 'Español'
+        assert await page.evaluate('document.querySelectorAll(".results li").length') == 2
+        await page.evaluate(act, {'action': 'press', 'selector': '#q', 'value': 'ArrowDown'})
+        await page.evaluate(act, {'action': 'press', 'selector': '#q', 'value': 'Enter'})
+        await page.evaluate(act, {'action': 'press', 'selector': '#q', 'value': 'Escape'})
+        assert await page.evaluate('[window.picked, window.escaped, !!window.submitted]') == \
+            ['CV Español IA — TCIT', True, False]
+        for bad in [{'action': 'press', 'selector': '#q', 'value': 'Tab'},
+                    {'action': 'press', 'selector': '#pw', 'value': 'Enter'},
+                    {'action': 'type', 'selector': '#pw', 'value': 'x'},
+                    {'action': 'type', 'selector': '#q', 'value': 'x' * 501}]:
+            with pytest.raises(Exception):
+                await page.evaluate(act, bad)
+        await browser.close()

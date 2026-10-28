@@ -13,8 +13,41 @@ function eligible(tab) {
 function origin(url) { return new URL(url).origin; }
 function safeUrl(url) { const u = new URL(url); return u.origin + u.pathname; }
 const PROTOCOL_VERSION = 1;
-const CONTENT_VERSION = "0.2.10";
-const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close"];
+const CONTENT_VERSION = "0.3.0";
+const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard"];
+// Pages an agent opens go to one window of their own, never the user's windows.
+let agentWindowId = null;
+function webUrl(url) {
+  if (typeof url !== "string" || !url || url.length > 4096) throw new Error("URL must be 1-4096 characters.");
+  const parsed = new URL(url);
+  if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Only http and https URLs can be opened.");
+  return parsed.href;
+}
+async function openInAgentWindow(url) {
+  if (!await allAccess()) throw new Error("Opening pages needs automatic access mode. In manual mode, open the page yourself and approve its tab.");
+  const target = webUrl(url);
+  const existing = agentWindowId == null ? null : await browser.windows.get(agentWindowId).catch(() => null);
+  let tab;
+  if (existing && !existing.incognito) tab = await browser.tabs.create({windowId:existing.id, url:target, active:true});
+  else {
+    // Background window where supported, so the user's current window keeps focus.
+    const created = await browser.windows.create({url:target, focused:false})
+      .catch(() => browser.windows.create({url:target}));
+    agentWindowId = created.id;
+    tab = created.tabs?.[0] || (await browser.tabs.query({windowId:created.id}))[0];
+  }
+  return {tab_id:String(tab.id), window_id:tab.windowId, agent_window:true,
+    notice:"Opened once in the agent window. Wait for the page, then inspect. No automatic retry."};
+}
+async function navigateTab(id, request) {
+  const action = request.action || "url";
+  if (action === "url") await browser.tabs.update(id, {url:webUrl(request.url)});
+  else if (action === "back") await browser.tabs.goBack(id);
+  else if (action === "forward") await browser.tabs.goForward(id);
+  else if (action === "reload") await browser.tabs.reload(id);
+  else throw new Error("Navigate action must be url, back, forward or reload.");
+  return {tab_id:String(id), action, notice:"Navigation started once. Manual approval ends if the origin changes. Inspect after the page loads."};
+}
 // Tabs an agent flagged for the user (CAPTCHA, login, a decision). In memory only.
 const attention = new Map();
 let notificationListener = false;
@@ -264,13 +297,15 @@ async function dispatch(request) {
   await ready;
   if (request.op === "status" && request.tab_id == null) return status();
   if (request.op === "attention" && request.action === "list") return {tabs:await attentionList()};
+  if (request.op === "open") return openInAgentWindow(request.url);
   if (request.op === "tabs") {
     const candidates = await allAccess() ? await browser.tabs.query({}) :
       await Promise.all(Array.from(approved.keys(), id => browser.tabs.get(id).catch(() => null)));
     const tabs = [];
     for (const tab of candidates) {
       if (tab && await allowed(tab))
-        tabs.push({tab_id: String(tab.id), title: tab.title, url: safeUrl(tab.url), active:!!tab.active, window_id:tab.windowId});
+        tabs.push({tab_id: String(tab.id), title: tab.title, url: safeUrl(tab.url), active:!!tab.active, window_id:tab.windowId,
+          agent_window:tab.windowId === agentWindowId});
     }
     return {mode, tabs};
   }
@@ -286,6 +321,7 @@ async function dispatch(request) {
     await browser.tabs.remove(id);
     return {tab_id:String(id),closed:true,notice:"Tab closed once. No retry."};
   }
+  if (request.op === "navigate") return navigateTab(id, request);
   if (request.op === "attention") return attentionOperation(request,tab);
   if (request.op === "status") return status(tab);
   if (request.op === "downloads") return downloadOperation(request,tab);

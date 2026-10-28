@@ -207,10 +207,10 @@ const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconne
 const browser={windows:{update:async(id,r)=>{assert.equal(r.focused,true);windowFocus++;}},
  tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},
  update:async(id,r)=>{assert.equal(r.active,true);activations++;tabs.get(id).active=true;},
- sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.2.10'}:{ok:true}},
+ sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.3.0'}:{ok:true}},
  query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),
  onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.2.10'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.3.0'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
  permissions:{contains:async()=>granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>settings,set:async s=>{settings={...settings,...s}}}},
  browserAction:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
@@ -550,7 +550,7 @@ async def test_chunked_upload_to_real_firefox_file_input(tmp_path, monkeypatch):
             calls.append(payload)
             assert len(json.dumps(payload).encode()) < 256 * 1024
             if payload['op'] == 'status':
-                return {'protocol_version': 1, 'addon_version': '0.2.10', 'capabilities': ['upload']}
+                return {'protocol_version': 1, 'addon_version': '0.3.0', 'capabilities': ['upload']}
             return await page.evaluate('r=>handler({drima:true,...r})', payload)
         monkeypatch.setattr(regular, 'request', bridge)
         result = await regular.upload('7', '#cv', [str(path)])
@@ -620,7 +620,7 @@ async def test_upload_path_limits_and_unknown_commit(tmp_path, monkeypatch):
     async def fake(payload):
         calls.append(payload)
         if payload['op'] == 'status':
-            return {'protocol_version': 1, 'addon_version': '0.2.10', 'capabilities': ['upload']}
+            return {'protocol_version': 1, 'addon_version': '0.3.0', 'capabilities': ['upload']}
         if payload['op'] == 'upload_begin':
             return {'upload_id': 'test'}
         if payload['op'] == 'upload_commit':
@@ -672,9 +672,9 @@ const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconne
 const browser={windows:{update:async()=>{}},
  tabs:{get:async id=>{if(!tabs.has(id))throw new Error('no tab');return tabs.get(id)},executeScript:async()=>{},
   update:async id=>{activations++;},remove:async id=>{tabs.delete(id);events.removed(id);},
-  sendMessage:async(id,r,o)=>{sent.push({id,r,o});return r.op==='content_status'?{content_version:'0.2.10'}:{ok:true}},
+  sendMessage:async(id,r,o)=>{sent.push({id,r,o});return r.op==='content_status'?{content_version:'0.3.0'}:{ok:true}},
   query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.2.10'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.3.0'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
  permissions:{contains:async p=>p.permissions?.[0]==='notifications'?notifications:granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>({mode:'all'}),set:async()=>{}}},
  notifications:{create:async(id,o)=>notes.push([id,o]),clear:async id=>cleared.push(id),onClicked:event('noteClicked')},
@@ -733,6 +733,66 @@ const call=async r=>{await listener({id:'x',...r});return messages.at(-1)};
     assert result.returncode == 0, result.stderr + result.stdout
 
 
+def test_open_uses_one_agent_window_and_navigate_stays_on_allowed_tabs():
+    root = Path(__file__).resolve().parents[1]
+    harness = r"""
+const vm=require('vm'), fs=require('fs'), assert=require('assert');
+const events={}, messages=[], windows=new Map([[1,{id:1,incognito:false}]]), calls=[];
+let listener, granted=true, nextTab=20, nextWin=50, storedMode='manual';
+const tabs=new Map([[1,{id:1,title:'Mail',url:'https://mail.example/',windowId:1,active:true}]]);
+const event=name=>({addListener:fn=>events[name]=fn});
+const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconnect'),postMessage:m=>messages.push(m)};
+const mk=(url,windowId)=>{const t={id:nextTab++,title:'',url,windowId,active:true};tabs.set(t.id,t);return t;};
+const browser={windows:{update:async()=>{},get:async id=>{if(!windows.has(id))throw new Error('gone');return windows.get(id)},
+  create:async o=>{calls.push(['window',o]);const w={id:nextWin++,incognito:false};windows.set(w.id,w);w.tabs=[mk(o.url,w.id)];return w;}},
+ tabs:{get:async id=>{if(!tabs.has(id))throw new Error('no tab');return tabs.get(id)},executeScript:async()=>{},
+  create:async o=>{calls.push(['tab',o]);return mk(o.url,o.windowId)},
+  update:async(id,o)=>{calls.push(['update',id,o]);if(o.url)tabs.get(id).url=o.url;},
+  goBack:async id=>calls.push(['back',id]),goForward:async id=>calls.push(['forward',id]),reload:async id=>calls.push(['reload',id]),
+  sendMessage:async()=>({content_version:'0.3.0'}),query:async q=>Array.from(tabs.values()),
+  onRemoved:event('removed'),onUpdated:event('updated')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.3.0'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
+ permissions:{contains:async p=>p.permissions?false:granted,onRemoved:event('permissionRemoved')},
+ storage:{local:{get:async()=>({mode:storedMode}),set:async()=>{}}},
+ browserAction:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{browser,URL,Map,Set,String,Number,Date});
+const call=async r=>{await listener({id:'x',...r});return messages.at(-1)};
+(async()=>{
+ // Manual mode: the agent cannot open pages on its own.
+ await events.ui({ui:'reconnect'},{id:'bridge',url:'moz-extension://bridge/popup.html'}).catch(()=>{});
+ assert((await call({op:'open',url:'https://jobs.example/a'})).error.includes('automatic access'));
+ assert.equal(calls.length,0);
+ await events.ui({ui:'all',confirmed:true},{id:'bridge',url:'moz-extension://bridge/popup.html'});
+ const caps=(await call({op:'status'})).result.capabilities;
+ for (const c of ['open','navigate','refs','keyboard','close']) assert(caps.includes(c),c);
+ for (const url of ['file:///etc/passwd','javascript:alert(1)','about:config','x'.repeat(5000)])
+  assert((await call({op:'open',url})).error, url);
+ let r=(await call({op:'open',url:'https://jobs.example/a'})).result;
+ assert.equal(r.agent_window,true); assert.equal(calls[0][0],'window'); assert.equal(calls[0][1].focused,false);
+ const win=r.window_id;
+ r=(await call({op:'open',url:'https://jobs.example/b'})).result;
+ assert.equal(r.window_id,win); assert.deepEqual(calls[1],['tab',{windowId:win,url:'https://jobs.example/b',active:true}]);
+ const listed=(await call({op:'tabs'})).result.tabs;
+ assert.equal(listed.find(t=>t.tab_id==='1').agent_window,false); assert(listed.filter(t=>t.agent_window).length===2);
+ // The agent window was closed by the user: the next open makes a new one.
+ windows.delete(win);
+ r=(await call({op:'open',url:'https://jobs.example/c'})).result; assert.notEqual(r.window_id,win);
+ // Navigate acts once on an allowed tab and validates URLs.
+ r=(await call({op:'navigate',tab_id:r.tab_id,action:'url',url:'https://jobs.example/d'})).result;
+ assert.equal(r.action,'url'); assert.equal(calls.at(-1)[0],'update');
+ for (const action of ['back','forward','reload']) {
+  await call({op:'navigate',tab_id:r.tab_id,action}); assert.equal(calls.at(-1)[0],action);
+ }
+ assert((await call({op:'navigate',tab_id:r.tab_id,action:'url',url:'file:///x'})).error);
+ assert((await call({op:'navigate',tab_id:r.tab_id,action:'submit'})).error);
+ console.log('ok');
+})().catch(e=>{console.error(e);process.exit(1)});
+"""
+    result = subprocess.run(["node", "-e", harness, str(root / "extension/background.js")],
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
 async def test_popup_lists_waiting_tabs_as_text_with_go_and_done():
     extension = Path(__file__).resolve().parents[1] / "extension"
     async with async_playwright() as p:
@@ -742,7 +802,7 @@ async def test_popup_lists_waiting_tabs_as_text_with_go_and_done():
         await page.evaluate("""() => {
           window.calls=[];window.flags=[{tab_id:'4',title:'<img src=x onerror=window.pwned=1>Apply',url:'https://a.example/',reason:'CAPTCHA'}];
           window.browser={runtime:{sendMessage:async r=>{calls.push(r);
-            if(r.ui==='state')return {mode:'manual',eligible:false,connected:true,addonVersion:'0.2.10',attention:flags};
+            if(r.ui==='state')return {mode:'manual',eligible:false,connected:true,addonVersion:'0.3.0',attention:flags};
             if(r.ui==='attention-done')flags=[];
             return {ok:true};}},permissions:{request:async()=>false,remove:async()=>true}};
         }""")

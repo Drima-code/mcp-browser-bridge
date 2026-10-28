@@ -11,8 +11,22 @@
       for (let node = e; node; node = node.parentElement || node.getRootNode().host) yield node;
     };
     const ancestorMatches = (e, css) => Array.from(ancestors(e)).some(node => node.matches(css));
+    // Short per-document element refs handed out by snapshot ("ref=e12"). They die
+    // with this document, so a ref can never reach an element of a later page.
+    const refs = new Map(), refOf = new WeakMap();
+    const refFor = e => {
+      let ref = refOf.get(e);
+      if (!ref && refs.size < 20000) { ref = `e${refs.size + 1}`; refOf.set(e,ref); refs.set(ref,e); }
+      return ref;
+    };
     const query = (css, root = document) => {
       if (typeof css !== "string" || !css || css.length > 8192) throw new Error("Invalid selector");
+      const ref = /^ref=(e\d{1,6})$/.exec(css);
+      if (ref) {
+        const e = refs.get(ref[1]);
+        if (!e || !e.isConnected) throw new Error("Unknown or stale ref; take a new snapshot");
+        return [e];
+      }
       const parts = css.split(" >>> ");
       if (parts.length > 16) throw new Error("Shadow selector depth exceeded");
       for (const part of parts.slice(0,-1)) {
@@ -237,8 +251,11 @@
         ...deepQuery(root, controlSelector), ...optionCandidates
       ].filter(e => (visible(e) || (e.type === "file" && uploadVisible(e))) && !sensitive(e) &&
         (!googleAccountRow(e) || request.google_account_selection === true));
+      const compact = request.compact === true;
       const page = candidates.slice(offset,offset+limit).map(e => ({
-        selector: selector(e), tag: e.tagName.toLowerCase(), id: e.id.slice(0,256),
+        ref: refFor(e) ? `ref=${refFor(e)}` : undefined,
+        selector: compact && refFor(e) && !/^#[^ >]{1,80}$/.test(selector(e)) ? undefined : selector(e),
+        tag: e.tagName.toLowerCase(), id: e.id.slice(0,256),
         name: (e.name || "").slice(0,256), type: e.type || "",
         role: e.getAttribute("role") || (optionCandidates.includes(e) ? "option" : ""),
         label: label(e).slice(0,400), placeholder: (e.getAttribute("placeholder") || "").slice(0,256),
@@ -258,6 +275,10 @@
         options: e.tagName === "SELECT" ? Array.from(e.options).slice(0,50)
           .map(o => ({value:o.value.slice(0,256),text:o.text.slice(0,256),disabled:o.disabled})) : undefined
       }));
+      // Compact output drops empty and default fields; refs replace long selectors.
+      if (compact) for (const control of page)
+        for (const key of Object.keys(control))
+          if ([undefined, null, "", false].includes(control[key])) delete control[key];
       // Keep the complete UTF-8 reply comfortably below the native host limit.
       let used = 0;
       const controls = [];
@@ -369,6 +390,44 @@
         if (e.type === "radio" && action === "uncheck") throw new Error("Choose another radio option instead of unchecking");
         if (e.checked !== (action === "check")) e.click();
         if (e.checked !== (action === "check")) throw new Error("Checked state did not change; inspect before retrying");
+      } else if (action === "press") {
+        // Synthetic keys reach page handlers (filters, comboboxes, dialogs) but
+        // trigger no native default such as form submission or focus movement.
+        const codes = {Enter:13, Escape:27, ArrowDown:40, ArrowUp:38, ArrowLeft:37, ArrowRight:39,
+          Backspace:8, Delete:46, Home:36, End:35, PageUp:33, PageDown:34, " ":32};
+        if (!Object.hasOwn(codes, value)) throw new Error("Unsupported key; use Enter, Escape, arrows, Backspace, Delete, Home, End, PageUp, PageDown or space");
+        const url = location.href;
+        const init = {key:value, code:value === " " ? "Space" : value, keyCode:codes[value], which:codes[value],
+          bubbles:true, cancelable:true, composed:true, view:window};
+        e.focus({preventScroll:true});
+        const proceed = e.dispatchEvent(new KeyboardEvent("keydown", init));
+        if (window.document !== document || location.href !== url) return {ok:true, notice:"Key pressed once; the page changed. Inspect before another action."};
+        if (proceed && (value === "Enter" || value === " "))
+          e.dispatchEvent(new KeyboardEvent("keypress", {...init, charCode:codes[value]}));
+        if (e.isConnected) e.dispatchEvent(new KeyboardEvent("keyup", init));
+      } else if (action === "type") {
+        // Append text key by key for widgets that filter as you type; fill replaces.
+        if (!e.matches("input,textarea") || ["file","checkbox","radio","button","submit","reset","image","range","color"].includes(e.type))
+          throw new Error("Not a text control");
+        if (e.readOnly) throw new Error("Read-only control; use the visible widget");
+        if (!value || value.length > 500) throw new Error("Type 1-500 characters");
+        const url = location.href, start = e.value;
+        const prototype = e.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(prototype,"value").set;
+        e.focus({preventScroll:true});
+        for (const ch of value) {
+          if (window.document !== document || location.href !== url || !e.isConnected || disabled(e))
+            throw new Error("Field changed while typing; inspect before retrying");
+          const init = {key:ch, bubbles:true, cancelable:true, composed:true, view:window};
+          if (e.dispatchEvent(new KeyboardEvent("keydown", init))) {
+            e.dispatchEvent(new KeyboardEvent("keypress", {...init, charCode:ch.codePointAt(0)}));
+            setter.call(e, e.value + ch);
+            e.dispatchEvent(new InputEvent("input", {inputType:"insertText", data:ch, bubbles:true, composed:true}));
+          }
+          e.dispatchEvent(new KeyboardEvent("keyup", init));
+        }
+        if (e.value !== start + value) return {ok:true, value:e.value.slice(0,1024),
+          notice:"Typed once; the page altered the text. Inspect before another action."};
       } else throw new Error("Unsupported action");
       return {ok:true, notice:"Action invoked once; inspect receipt before claiming submission. No automatic retry."};
     }
@@ -432,7 +491,7 @@
     if (!request.drima) return;
     if (request.expected_url && location.href !== request.expected_url)
       throw new Error("Tab navigated; inspect before retrying");
-    if (request.op === "content_status") return Promise.resolve({content_version:"0.2.10"});
+    if (request.op === "content_status") return Promise.resolve({content_version:"0.3.0"});
     if (request.op === "attention_mark" || request.op === "attention_unmark") {
       if (window !== window.top) return;
       return Promise.resolve(request.op === "attention_mark" ? markAttention(request.reason) : unmarkAttention());
