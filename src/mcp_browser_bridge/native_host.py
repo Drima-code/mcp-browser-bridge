@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import re
 import socket
 import stat
 import struct
@@ -21,6 +22,38 @@ def socket_path() -> Path:
         )
     )
     return directory / "regular-browser.sock"
+
+
+ROUTES = "profile-routes.json"
+
+
+def firefox_profile(pid=None):
+    """Directory name of the profile given to the Firefox process that started us."""
+    try:
+        cmdline = Path(f"/proc/{pid or os.getppid()}/cmdline").read_bytes()
+    except OSError:
+        return None
+    args = cmdline.split(b"\0")
+    for flag, value in zip(args, args[1:]):
+        if flag in (b"--profile", b"-profile") and value:
+            return Path(os.fsdecode(value)).name
+    return None
+
+
+def host_socket_path(profile=None) -> Path:
+    """Explicit env wins; else profile-routes.json may give a profile its own subdirectory."""
+    if "DRIMA_REGULAR_BROWSER_DATA" in os.environ:
+        return socket_path()
+    base = socket_path().parent
+    profile = profile or firefox_profile()
+    try:
+        routes = json.loads((base / ROUTES).read_text())
+    except (OSError, ValueError):
+        routes = {}
+    target = routes.get(profile) if isinstance(routes, dict) and profile else None
+    if isinstance(target, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", target):
+        return base / target / "regular-browser.sock"
+    return socket_path()
 
 
 def read_exact(stream, size):
@@ -60,13 +93,19 @@ def ensure_private_directory(directory):
 
 
 def main():
-    path = socket_path()
+    path = host_socket_path()
     ensure_private_directory(path.parent)
     # Serialize host processes; never remove another live host's socket.
     lock_fd = os.open(
         path.parent / "regular-browser.lock", os.O_CREAT | os.O_RDWR, 0o600
     )
-    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit(
+            f"Another Firefox profile's bridge host already uses {path.parent}. "
+            f"Route this profile to its own directory in {path.parent / ROUTES}."
+        ) from None
     if path.exists() or path.is_symlink():
         info = path.lstat()
         if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():

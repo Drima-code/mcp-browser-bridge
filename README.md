@@ -281,3 +281,15 @@ DRIMA_REGULAR_BROWSER_DATA="$HOME/.local/share/drima-browser/work" firefox -P wo
 
 Give the MCP server the same variable (for example an `env` entry in the client's
 MCP configuration). Install the addon in each profile that should be reachable.
+
+Profiles opened from Firefox's profile switcher do not get that variable. For
+those, the host reads the profile directory Firefox was started with and looks it
+up in `~/.local/share/drima-browser/profile-routes.json`, which maps a profile
+directory name to a subdirectory:
+
+```json
+{"Tez9hEU9.Profile 4": "work"}
+```
+
+Unlisted profiles use the default directory. Only one running profile can own a
+directory; a second one gets a "Reconnect native host" error naming the route file.

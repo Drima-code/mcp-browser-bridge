@@ -14,6 +14,8 @@ from playwright.async_api import async_playwright
 from mcp_browser_bridge import regular
 from mcp_browser_bridge.native_host import (
     ensure_private_directory,
+    firefox_profile,
+    host_socket_path,
     read_message,
     write_message,
 )
@@ -72,6 +74,35 @@ async def test_bridge_single_shot_and_errors(tmp_path, monkeypatch):
         with pytest.raises(RuntimeError, match="permissions"):
             await regular.request({"op": "tabs"})
         assert len(received) == 2
+
+
+def test_host_routes_each_firefox_profile_to_its_own_directory(tmp_path, monkeypatch):
+    monkeypatch.delenv("DRIMA_REGULAR_BROWSER_DATA", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    base = tmp_path / ".local/share/drima-browser"
+    base.mkdir(parents=True)
+    default = base / "regular-browser.sock"
+    assert host_socket_path("Tez9hEU9.Profile 4") == default
+    (base / "profile-routes.json").write_text(json.dumps(
+        {"Tez9hEU9.Profile 4": "jobsearch", "evil": "../escape", "other": 7}))
+    assert host_socket_path("Tez9hEU9.Profile 4") == base / "jobsearch/regular-browser.sock"
+    for profile in ("evil", "other", "unknown", None):
+        assert host_socket_path(profile) == default
+    (base / "profile-routes.json").write_text("not json")
+    assert host_socket_path("Tez9hEU9.Profile 4") == default
+    monkeypatch.setenv("DRIMA_REGULAR_BROWSER_DATA", str(tmp_path / "explicit"))
+    assert host_socket_path("Tez9hEU9.Profile 4") == tmp_path / "explicit/regular-browser.sock"
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(5)", "--profile", str(tmp_path / "x.Work")])
+    try:
+        for _ in range(100):
+            if firefox_profile(process.pid):
+                break
+        assert firefox_profile(process.pid) == "x.Work"
+    finally:
+        process.kill()
+        process.wait()
+    assert firefox_profile(os.getpid()) is None
 
 
 async def test_real_native_host_roundtrip(tmp_path, monkeypatch):

@@ -1,3 +1,14 @@
+# Native host profile routes — 2026-10-28
+
+Profiles opened from Firefox's profile switcher ("Work", `Tez9hEU9.Profile 4`)
+start the native host without `DRIMA_REGULAR_BROWSER_DATA`, so the host competed
+with the original profile for the default lock and exited (popup: ERR). The
+host now reads the parent Firefox `--profile` directory and routes it through
+`~/.local/share/drima-browser/profile-routes.json`; lock contention exits with a
+message naming that file. Host-only change: no addon rebuild or signing needed.
+Route installed: Work -> `jobsearch`. Verified: 44 tests, ruff, route resolved
+for the live Work process.
+
 # Attention flags 0.2.9 — 2026-10-28
 
 Prepared 0.2.9 (includes unreleased 0.2.8). New `attention` native operation and
