@@ -8,6 +8,8 @@ async function render() {
   $("downloads").disabled = !!state.downloadsPermission;
   $("downloads-off").disabled = !state.downloadsPermission;
   $("reconnect").disabled = state.connected;
+  $("screenshots").disabled = !!state.screenshotsPermission;
+  $("screenshots-off").disabled = !state.screenshotsPermission;
   $("notifications").disabled = !!state.notificationsPermission;
   $("notifications-off").disabled = !state.notificationsPermission;
   const list = $("attention");
@@ -48,6 +50,18 @@ $("downloads").addEventListener("click", async () => {
 });
 $("downloads-off").addEventListener("click", async () => {
   try { await browser.permissions.remove({permissions:["downloads"]}); await render(); }
+  catch (error) { fail(error); }
+});
+$("screenshots").addEventListener("click", async () => {
+  try {
+    // Directly in the click handler so Firefox shows its permission prompt.
+    const granted = await browser.permissions.request({origins:["<all_urls>"]});
+    if (!granted) throw new Error("Screenshot permission denied; screenshots remain off.");
+    await render();
+  } catch (error) { fail(error); }
+});
+$("screenshots-off").addEventListener("click", async () => {
+  try { await browser.permissions.remove({origins:["<all_urls>"]}); await render(); }
   catch (error) { fail(error); }
 });
 $("notifications").addEventListener("click", async () => {

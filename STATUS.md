@@ -7,10 +7,11 @@ form work. New: `open` (automatic mode only; one agent window, focused:false),
 (allowlisted keys, synthetic, no native defaults) and `type` (<=500 chars);
 per-document snapshot refs (`ref=eN`, stale after document change) and compact
 snapshots (MCP default). Capabilities: open, navigate, refs, keyboard, close.
-Screenshots deferred: captureVisibleTab needs `<all_urls>` (new permission).
-Verified: 47 tests, ruff, web-ext lint 0/0/0. No new permissions.
+Opt-in screenshots: optional `<all_urls>` (captureVisibleTab requirement) via popup
+button; visible allowed tab only; recapture at 0.75/0.5 scale to fit 190 KB.
+Verified: 50 tests, ruff, web-ext lint 0/0/0. No new required permissions.
 Unsigned archive: artifacts/mcp-browser-bridge-0.3.0.zip
-(SHA256 ed54b8c9edaa726f33070f3efc2291b44f081cf0cdefbddde1189c1ea74ffba7).
+(SHA256 bbc21446a0ae9bb71306e50a260e2fcc41e1bb14961afc42caafbc7c1640b480).
 Supersedes the unsigned 0.2.10 archive.
 
 # Tab close 0.2.10 — 2026-10-28

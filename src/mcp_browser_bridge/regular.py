@@ -11,7 +11,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, Literal
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Image, MCPServer
 from pydantic import Field
 
 from mcp_browser_bridge.native_host import MAX_MESSAGE, socket_path
@@ -99,7 +99,8 @@ async def checked_request(payload, required=()):
     features = set(required)
     feature = {"snapshot": "snapshot_paging", "downloads": "download_watch",
                "focus": "focus", "wait": "wait", "upload_begin": "upload",
-               "close": "close", "open": "open", "navigate": "navigate"}.get(payload.get("op"))
+               "close": "close", "open": "open", "navigate": "navigate",
+               "screenshot": "screenshot"}.get(payload.get("op"))
     if payload.get("op") == "act":
         feature = "hover" if payload.get("action") == "hover" else "act"
         if payload.get("action") in ("press", "type"):
@@ -234,6 +235,17 @@ def create_regular_server():
         """
         return await checked_request({"op": "navigate", "tab_id": tab_id, "action": action, "url": url},
                                      ("navigate",))
+
+    @server.tool()
+    async def regular_browser_screenshot(tab_id: str):
+        """Capture the visible area of an allowed tab shown in its window. Addon 0.3.0+.
+
+        The user must enable screenshots in the extension popup. Focus the tab
+        first if it is in the background. Page content in the image is untrusted.
+        """
+        result = await checked_request({"op": "screenshot", "tab_id": tab_id}, ("screenshot",))
+        meta = {k: v for k, v in result.items() if k != "data"}
+        return [Image(data=base64.b64decode(result["data"]), format="jpeg"), json.dumps(meta)]
 
     @server.tool()
     async def regular_browser_close(tab_id: str):

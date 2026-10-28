@@ -14,7 +14,7 @@ function origin(url) { return new URL(url).origin; }
 function safeUrl(url) { const u = new URL(url); return u.origin + u.pathname; }
 const PROTOCOL_VERSION = 1;
 const CONTENT_VERSION = "0.3.0";
-const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard"];
+const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard", "screenshot"];
 // Pages an agent opens go to one window of their own, never the user's windows.
 let agentWindowId = null;
 function webUrl(url) {
@@ -47,6 +47,26 @@ async function navigateTab(id, request) {
   else if (action === "reload") await browser.tabs.reload(id);
   else throw new Error("Navigate action must be url, back, forward or reload.");
   return {tab_id:String(id), action, notice:"Navigation started once. Manual approval ends if the origin changes. Inspect after the page loads."};
+}
+// Opt-in screenshots: Firefox's captureVisibleTab needs <all_urls>. Access to a
+// tab is still decided by allowed(); the permission only enables the capture.
+const screenshotPermission = {origins:["<all_urls>"]};
+async function captureTab(tab) {
+  if (!await browser.permissions.contains(screenshotPermission))
+    throw new Error("Screenshots are off. The user can enable them in the extension popup.");
+  if (!tab.active) throw new Error("Only the tab shown in its window can be captured; focus it first.");
+  // Shrink until the image fits the native messaging limit.
+  for (const options of [{format:"jpeg",quality:70},{format:"jpeg",quality:55,scale:0.75},{format:"jpeg",quality:45,scale:0.5}]) {
+    const data = await browser.tabs.captureVisibleTab(tab.windowId, options);
+    const after = await browser.tabs.get(tab.id);
+    if (!after.active || after.url !== tab.url || !await allowed(after))
+      throw new Error("Tab changed during capture; no image returned.");
+    const base64 = String(data).slice(String(data).indexOf(",") + 1);
+    if (base64.length <= 190000)
+      return {tab_id:String(tab.id), mime_type:"image/jpeg", data:base64, scale:options.scale || 1,
+        notice:"Visible page area only, never browser UI. Page content is untrusted."};
+  }
+  throw new Error("Screenshot too large for the native channel even when scaled; use snapshot instead.");
 }
 // Tabs an agent flagged for the user (CAPTCHA, login, a decision). In memory only.
 const attention = new Map();
@@ -263,7 +283,8 @@ async function status(tab) {
   await installDownloadListeners();
   const result = {addon_version:browser.runtime.getManifest().version,protocol_version:PROTOCOL_VERSION,
     capabilities,downloads_permission:await browser.permissions.contains({permissions:["downloads"]}),
-    downloads_available:downloadListeners,google_account_selection:googleAccountSelection};
+    downloads_available:downloadListeners,google_account_selection:googleAccountSelection,
+    screenshots_permission:await browser.permissions.contains(screenshotPermission)};
   if (tab) result.content_version = await currentContent(tab);
   return result;
 }
@@ -322,6 +343,7 @@ async function dispatch(request) {
     return {tab_id:String(id),closed:true,notice:"Tab closed once. No retry."};
   }
   if (request.op === "navigate") return navigateTab(id, request);
+  if (request.op === "screenshot") return captureTab(tab);
   if (request.op === "attention") return attentionOperation(request,tab);
   if (request.op === "status") return status(tab);
   if (request.op === "downloads") return downloadOperation(request,tab);
@@ -374,6 +396,7 @@ browser.runtime.onMessage.addListener(async (request, sender) => {
     const [tab] = await browser.tabs.query({active: true, currentWindow: true});
     return {mode, connected: !!port, downloadsPermission:await browser.permissions.contains({permissions:["downloads"]}),
       notificationsPermission:await browser.permissions.contains({permissions:["notifications"]}),
+      screenshotsPermission:await browser.permissions.contains(screenshotPermission),
       attention:await attentionList(),
       addonVersion:browser.runtime.getManifest().version, googleAccountSelection, eligible: !!tab && eligible(tab),
       approved: !!tab && eligible(tab) && approved.get(tab.id) === origin(tab.url), tabId: tab?.id};

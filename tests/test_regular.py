@@ -193,7 +193,7 @@ def test_background_permissions_and_origin_revocation():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / "extension/manifest.json").read_text())
     assert set(manifest["permissions"]) == {"activeTab", "nativeMessaging", "storage"}
-    assert set(manifest["optional_permissions"]) == {"downloads", "notifications", "http://*/*", "https://*/*"}
+    assert set(manifest["optional_permissions"]) == {"downloads", "notifications", "http://*/*", "https://*/*", "<all_urls>"}
     harness = r"""
 const vm=require('vm'), fs=require('fs'), assert=require('assert');
 const events={}, messages=[], forwarded=[];
@@ -791,6 +791,90 @@ const call=async r=>{await listener({id:'x',...r});return messages.at(-1)};
     result = subprocess.run(["node", "-e", harness, str(root / "extension/background.js")],
                             capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stderr + result.stdout
+
+
+def test_screenshot_is_opt_in_visible_tab_only_and_fits_native_limit():
+    root = Path(__file__).resolve().parents[1]
+    harness = r"""
+const vm=require('vm'), fs=require('fs'), assert=require('assert');
+const events={}, messages=[], captures=[];
+let listener, shots=false, big=0, swapDuring=false;
+const tabs=new Map([[1,{id:1,title:'Preview',url:'https://jobs.example/apply',windowId:3,active:true}],
+ [2,{id:2,title:'Other',url:'https://jobs.example/list',windowId:3,active:false}]]);
+const event=name=>({addListener:fn=>events[name]=fn});
+const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconnect'),postMessage:m=>messages.push(m)};
+const browser={windows:{update:async()=>{}},
+ tabs:{get:async id=>{if(!tabs.has(id))throw new Error('no tab');return {...tabs.get(id)}},executeScript:async()=>{},
+  captureVisibleTab:async(w,o)=>{captures.push([w,o]);if(swapDuring)tabs.get(1).url='https://jobs.example/sent';
+   return 'data:image/jpeg;base64,'+(big-->0?'A'.repeat(300000):'QUJD');},
+  sendMessage:async()=>({content_version:'0.3.0'}),query:async()=>Array.from(tabs.values()),onRemoved:event('removed'),onUpdated:event('updated')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.3.0'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
+ permissions:{contains:async p=>p.origins?.[0]==='<all_urls>'?shots:!p.permissions,onRemoved:event('permissionRemoved')},
+ storage:{local:{get:async()=>({mode:'all'}),set:async()=>{}}},
+ browserAction:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{browser,URL,Map,Set,String,Number,Date});
+const call=async r=>{await listener({id:'x',...r});return messages.at(-1)};
+(async()=>{
+ await events.ui({ui:'state'},{id:'bridge',url:'moz-extension://bridge/popup.html'});
+ const status=(await call({op:'status'})).result;
+ assert(status.capabilities.includes('screenshot')); assert.equal(status.screenshots_permission,false);
+ assert((await call({op:'screenshot',tab_id:'1'})).error.includes('popup')); assert.equal(captures.length,0);
+ shots=true;
+ assert((await call({op:'screenshot',tab_id:'2'})).error.includes('focus')); assert.equal(captures.length,0);
+ let r=(await call({op:'screenshot',tab_id:'1'})).result;
+ assert.equal(r.data,'QUJD'); assert.equal(r.mime_type,'image/jpeg'); assert.equal(r.scale,1);
+ assert.deepEqual(captures[0],[3,{format:'jpeg',quality:70}]);
+ big=1; r=(await call({op:'screenshot',tab_id:'1'})).result; assert.equal(r.scale,0.75);
+ big=3; assert((await call({op:'screenshot',tab_id:'1'})).error.includes('too large'));
+ swapDuring=true; big=0;
+ assert((await call({op:'screenshot',tab_id:'1'})).error.includes('changed'));
+ console.log('ok');
+})().catch(e=>{console.error(e);process.exit(1)});
+"""
+    result = subprocess.run(["node", "-e", harness, str(root / "extension/background.js")],
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+async def test_popup_screenshot_permission_request_and_revoke():
+    extension = Path(__file__).resolve().parents[1] / "extension"
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content((extension / "popup.html").read_text())
+        await page.evaluate("""() => {
+          window.calls=[];window.grant=false;window.shots=false;
+          window.browser={runtime:{sendMessage:async r=>{calls.push({ui:r.ui});
+            if(r.ui==='state')return {mode:'all',eligible:true,connected:true,addonVersion:'0.3.0',
+              screenshotsPermission:shots,attention:[]};return {ok:true};}},
+            permissions:{request:async q=>{calls.push({request:q});shots=grant;return grant;},
+              remove:async q=>{calls.push({remove:q});shots=false;return true;}}};
+        }""")
+        await page.evaluate((extension / "popup.js").read_text())
+        await page.wait_for_function("document.querySelector('#status').textContent.includes('0.3.0')")
+        assert await page.evaluate("document.querySelector('#screenshots-off').disabled")
+        await page.locator("#screenshots").click()
+        await page.wait_for_function("document.querySelector('#error').textContent.includes('denied')")
+        await page.evaluate("grant=true")
+        await page.locator("#screenshots").click()
+        await page.wait_for_function("document.querySelector('#screenshots').disabled")
+        assert await page.evaluate("calls.filter(c=>c.request).every(c=>c.request.origins[0]==='<all_urls>')")
+        await page.locator("#screenshots-off").click()
+        await page.wait_for_function("document.querySelector('#screenshots-off').disabled")
+        assert await page.evaluate("calls.some(c=>c.remove?.origins?.[0]==='<all_urls>')")
+        await browser.close()
+
+
+async def test_screenshot_tool_returns_image_and_metadata(monkeypatch):
+    async def fake(payload, required=()):
+        assert payload == {"op": "screenshot", "tab_id": "7"} and required == ("screenshot",)
+        return {"tab_id": "7", "mime_type": "image/jpeg", "data": "QUJD", "scale": 1, "notice": "n"}
+
+    monkeypatch.setattr(regular, "checked_request", fake)
+    server = regular.create_regular_server()
+    result = await server.call_tool("regular_browser_screenshot", {"tab_id": "7"})
+    text = json.dumps(result, default=str)
+    assert "image/jpeg" in text and "QUJD" in text and '\\"scale\\": 1' in text
 
 
 async def test_popup_lists_waiting_tabs_as_text_with_go_and_done():

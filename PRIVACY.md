@@ -27,6 +27,15 @@ it may already use. It can close those tabs. The page addresses it requests are
 sent to the websites concerned, as with any navigation. In manual mode it cannot
 open pages; navigating an approved tab to another website ends that tab's approval.
 
+Screenshots are off by default. If you enable them in the popup, Firefox grants
+the extension its "all websites" permission, which its screenshot function
+requires. The connected client can then request an image of the visible area of a
+tab it may already use, while that tab is shown in its window. Images go only to the
+local application and its MCP client (and from there possibly to your AI
+provider). They may show anything visible on the page, including personal data.
+Browser toolbars and other windows are not captured. Disable screenshots in the
+popup to remove the permission.
+
 When the local MCP client explicitly requests a file upload, the companion reads
 only the named absolute local files and sends their bytes and base filenames in
 bounded chunks to the approved tab. Absolute paths are not sent to the extension
