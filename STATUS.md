@@ -1,3 +1,13 @@
+# 0.3.2 edge cases and real-Firefox E2E — 2026-10-28
+
+Added before signing: dialog answering during acts (dismiss default, accept on
+request, reported), sign-in pop-up exemption from routing, act scroll and
+open_frame, frame origin/ref, snapshot text paging, drop uploads. New
+scripts/e2e_real_firefox.py + tests/e2e_site: temporary install in headless
+Firefox 156 via geckodriver, private socket; 35/35 checks, stable over 3 runs.
+Unit: 54 tests, ruff, web-ext lint 0/0/0. Archive rebuilt:
+artifacts/mcp-browser-bridge-0.3.2.zip (SHA256 6677f1966476a1bbfea272a817a6daa6ed97680fbe6acc041d53870cc1bc20ad).
+
 # Picker uploads and new-window routing 0.3.2 — 2026-10-28
 
 LinkedIn live test: Easy Apply "Upload resume" creates its file input only on

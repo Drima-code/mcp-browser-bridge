@@ -307,6 +307,25 @@ Firefox opens neither a native file chooser nor a pop-up for a synthetic click.
   `target=_blank` link activations with http(s) addresses are handed to the
   extension, which opens them in the agent window (automatic access mode only).
   The click result lists `opened: [{tab_id, origin}]`; full URLs are not returned.
+  Sign-in pop-ups (Google, Microsoft, Apple, GitHub login, LinkedIn OAuth) keep
+  native behaviour because they report back to their opener.
+- `alert`/`confirm`/`prompt` raised during an act are answered (`dialog`:
+  `dismiss` by default, or `accept`) and reported under `dialogs`.
+- `act` `scroll` (down/up/top/bottom/into_view) scrolls the target's container or
+  the page; `open_frame` opens a frame's page (e.g. a cross-origin embedded ATS
+  form) in the agent window. Snapshot frames list `origin` and `ref`.
+- Snapshot `text_length`/`next_text_offset` and the `text_offset` parameter page
+  long text. `upload(via_drop=True)` delivers files to a drop area by drag events.
+
+### Real-Firefox end-to-end check
+
+`uv run --frozen --with selenium python scripts/e2e_real_firefox.py` installs the
+packaged addon temporarily into a throwaway headless Firefox (geckodriver), grants
+its optional permissions through the popup, and drives the synthetic job site in
+`tests/e2e_site` through the bridge on a private socket: pop-up routing, sign-in
+exemption, dialogs, agent window, refs, keyboard, select/radio/checkbox,
+contenteditable, shadow DOM, frames, hidden-input/picker/drop uploads, scroll
+loading, text paging, screenshots, attention, navigate and close (35 checks).
 
 ## Several Firefox profiles
 

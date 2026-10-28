@@ -533,3 +533,76 @@ async def test_new_windows_from_agent_clicks_route_to_the_extension():
             "https://ats.example/apply?token=secret", "https://jobs.example/form"]
         assert await page.evaluate("String(window.open)") == native_open
         await browser.close()
+
+
+async def test_dialogs_answered_and_reported_and_sign_in_popups_stay_native():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(
+            '<button id="send" onclick="window.sent=confirm(\'Send application?\')">Send</button>'
+            '<button id="warn" onclick="alert(\'Saved\');window.after=1">Save</button>'
+            '<button id="name" onclick="window.named=prompt(\'Name?\',\'David\')">Name</button>'
+            '<button id="google" onclick="window.native=1;window.open(\'https://accounts.google.com/o/oauth2\')">Google</button>')
+        await install(page)
+        await page.evaluate(XRAY_SHIM)
+        # A native popup stand-in: page code that is not the agent's hook.
+        await page.evaluate("window.open=function(){window.nativeOpens=(window.nativeOpens||0)+1;return null};0")
+        act = "r=>handler({drima:true,op:'act',action:'click',...r})"
+        result = await page.evaluate(act, {"selector": "#send"})
+        assert result["dialogs"] == [{"type": "confirm", "message": "Send application?", "answered": "dismiss"}]
+        assert await page.evaluate("window.sent") is False
+        result = await page.evaluate(act, {"selector": "#send", "dialog": "accept"})
+        assert await page.evaluate("window.sent") is True and result["dialogs"][0]["answered"] == "accept"
+        result = await page.evaluate(act, {"selector": "#warn"})
+        assert result["dialogs"][0] == {"type": "alert", "message": "Saved", "answered": "ok"}
+        assert await page.evaluate("window.after") == 1
+        await page.evaluate(act, {"selector": "#name"})
+        assert await page.evaluate("window.named") is None
+        result = await page.evaluate(act, {"selector": "#google"})
+        assert "opened" not in result and await page.evaluate("[window.native, window.nativeOpens, routed.length]") == [1, 1, 0]
+        assert await page.evaluate("[confirm, alert, prompt].every(f => String(f).includes('[native code]'))")
+        await browser.close()
+
+
+async def test_scroll_open_frame_text_paging_and_drop_upload():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(
+            '<div id="list" style="height:100px;overflow:auto"><div style="height:1000px"><a href="#">Job 1</a></div></div>'
+            '<iframe id="ats" src="https://boards.example/embed/job?for=acme&token=55" title="Apply"></iframe>'
+            '<div id="drop" style="padding:20px">Drag your CV here</div>'
+            '<p>' + 'Long description. ' * 2000 + 'END</p>'
+            '<script>window.dropped=[];["dragenter","dragover","drop"].forEach(t=>drop.addEventListener(t,e=>{'
+            'e.preventDefault();if(t==="drop")dropped.push(...Array.from(e.dataTransfer.files).map(f=>f.name));}));</script>')
+        await install(page)
+        await page.evaluate(XRAY_SHIM)
+        act = "r=>handler({drima:true,op:'act',...r})"
+        result = await page.evaluate(act, {"action": "scroll", "selector": "#list a", "value": "down"})
+        assert result["moved"] and not result["at_end"] and await page.evaluate("list.scrollTop") == 80
+        result = await page.evaluate(act, {"action": "scroll", "selector": "#list a", "value": "bottom"})
+        assert result["at_end"]
+        with pytest.raises(Exception, match="Scroll value"):
+            await page.evaluate(act, {"action": "scroll", "selector": "#list a", "value": "sideways"})
+        snap = await snapshot(page)
+        frame = snap["frames"][0]
+        assert frame["origin"] == "https://boards.example" and "token" not in str(snap["frames"])
+        result = await page.evaluate(act, {"action": "open_frame", "selector": frame["ref"]})
+        assert result["opened"] == [{"tab_id": "41", "origin": "https://boards.example"}]
+        assert (await page.evaluate("routed[0].drima_route_open")).endswith("token=55")
+        # Long text pages forward without loss.
+        first = await snapshot(page, max_chars=15000)
+        assert first["truncated"] and first["next_text_offset"] == 15000
+        rest = await snapshot(page, max_chars=15000, text_offset=first["next_text_offset"])
+        while rest["next_text_offset"]:
+            rest = await snapshot(page, max_chars=15000, text_offset=rest["next_text_offset"])
+        assert rest["text"].rstrip().endswith("END") and rest["text_length"] == first["text_length"]
+        meta = {"name": "cv.pdf", "size": 3, "type": "application/pdf", "last_modified": 1}
+        begin = await page.evaluate("r=>handler({drima:true,op:'upload_begin',...r})",
+                                    {"selector": "#drop", "files": [meta], "drop": True})
+        await page.evaluate("r=>handler({drima:true,op:'upload_chunk',...r})",
+                            {"upload_id": begin["upload_id"], "file_index": 0, "offset": 0, "data": "QUJD"})
+        result = await page.evaluate("r=>handler({drima:true,op:'upload_commit',...r})", {"upload_id": begin["upload_id"]})
+        assert result["via_drop"] and await page.evaluate("dropped") == ["cv.pdf"]
+        await browser.close()

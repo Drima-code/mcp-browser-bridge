@@ -14,7 +14,7 @@ function origin(url) { return new URL(url).origin; }
 function safeUrl(url) { const u = new URL(url); return u.origin + u.pathname; }
 const PROTOCOL_VERSION = 1;
 const CONTENT_VERSION = "0.3.2";
-const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard", "screenshot", "picker_upload", "popup_routing"];
+const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard", "screenshot", "picker_upload", "popup_routing", "dialogs", "scroll", "open_frame", "text_paging", "drop_upload"];
 // Pages an agent opens go to one window of their own, never the user's windows.
 let agentWindowId = null;
 function webUrl(url) {

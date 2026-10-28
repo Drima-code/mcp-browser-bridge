@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>Easy Apply</title>
+<dialog open aria-modal="true"><h2>Apply to Fake Corp</h2>
+ <p>Currículum*</p><button id="upload">Upload resume</button><p id="chosen">none</p>
+ <div id="dropzone" style="padding:30px;border:1px dashed">Drag your CV here</div><p id="dropped">none</p>
+ <label>Teléfono móvil <input id="phone" type="tel"></label>
+ <button id="next" onclick="document.getElementById('step').textContent = confirm('Submit application?') ? 'sent' : 'kept'">Submit</button>
+ <p id="step">editing</p>
+</dialog>
+<script>
+document.getElementById('upload').onclick = () => {
+  const input = document.createElement('input'); input.type = 'file'; input.accept = '.pdf,.doc,.docx';
+  input.onchange = () => { document.getElementById('chosen').textContent = input.files[0].name + ':' + input.files[0].size; };
+  input.click();
+};
+const dz = document.getElementById('dropzone');
+for (const t of ['dragenter', 'dragover', 'drop']) dz.addEventListener(t, e => {
+  e.preventDefault();
+  if (t === 'drop') document.getElementById('dropped').textContent = Array.from(e.dataTransfer.files).map(f => f.name + ':' + f.size).join(',');
+});
+</script>

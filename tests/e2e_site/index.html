@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>Fake job board</title>
+<h1>Fake job board</h1>
+<p id="log"></p>
+<a id="external" target="_blank" href="/ats.html?token=secret-value">Apply on company website</a>
+<button id="popup" onclick="window.open('/ats.html?from=popup')">Apply (window.open)</button>
+<button id="signin" onclick="window.open('https://accounts.google.com/o/oauth2/auth?x=1')">Sign in with Google</button>
+<button id="confirm" onclick="log.textContent='confirm:'+confirm('Discard draft?')">Discard</button>
+<a id="samewin" href="/ats.html">Same tab link</a>

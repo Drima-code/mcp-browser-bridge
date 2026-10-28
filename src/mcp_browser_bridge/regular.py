@@ -105,6 +105,12 @@ async def checked_request(payload, required=()):
         feature = "hover" if payload.get("action") == "hover" else "act"
         if payload.get("action") in ("press", "type"):
             features.add("keyboard")
+        if payload.get("action") in ("scroll", "open_frame"):
+            features.add(payload["action"])
+        if payload.get("dialog"):
+            features.add("dialogs")
+    if payload.get("text_offset"):
+        features.add("text_paging")
     if str(payload.get("selector") or "").startswith("ref=") or payload.get("compact"):
         features.add("refs")
     if feature:
@@ -125,8 +131,10 @@ UPLOAD_CHUNK_BYTES = 96 * 1024
 
 
 async def upload(tab_id: str, selector: str, paths: list[str], frame_path: list[str] | None = None,
-                 document_id: str | None = None, via_picker: bool = False):
+                 document_id: str | None = None, via_picker: bool = False, via_drop: bool = False):
     """Transfer explicit regular files in bounded messages; attach once, never retry."""
+    if via_picker and via_drop:
+        raise ValueError("Choose via_picker or via_drop, not both")
     if not 1 <= len(paths) <= 10:
         raise ValueError("Provide between 1 and 10 explicit file paths")
     with ExitStack() as stack:
@@ -158,8 +166,10 @@ async def upload(tab_id: str, selector: str, paths: list[str], frame_path: list[
         target = {"frame_path": frame_path or [], "document_id": document_id}
         begin = await checked_request({"op": "upload_begin", "tab_id": tab_id,
                                        "selector": selector, "files": metadata, **target,
-                                       **({"picker": True} if via_picker else {})},
-                                      ("upload", "picker_upload") if via_picker else ("upload",))
+                                       **({"picker": True} if via_picker else {}),
+                                       **({"drop": True} if via_drop else {})},
+                                      ("upload",) + (("picker_upload",) if via_picker else ())
+                                      + (("drop_upload",) if via_drop else ()))
         upload_id = begin["upload_id"]
         context = {"tab_id": tab_id, "upload_id": upload_id, **target}
         try:
@@ -279,12 +289,15 @@ def create_regular_server():
         frame_path: list[str] | None = None,
         document_id: str | None = None,
         compact: bool = True,
+        text_offset: Annotated[int, Field(ge=0, le=10_000_000)] = 0,
     ):
         """Read a visible dialog or page, omitting password and token fields.
 
         Addon 0.3.0: each control has a short ref ("ref=e12") usable anywhere a
         selector is accepted, valid only for this document. compact=True (default)
         drops empty fields and long positional selectors; set False for full CSS.
+        Addon 0.3.2: text_length and next_text_offset page long page text; pass
+        text_offset to read further. Frames list their origin and a ref.
 
         Requires addon 0.2.5+ for scope/paging. Follow next_offset for omitted
         controls; use an observed CSS scope to inspect a viewer or toolbar.
@@ -300,22 +313,32 @@ def create_regular_server():
             {"op": "snapshot", "tab_id": tab_id, "max_chars": max_chars,
              "scope": scope, "offset": offset, "limit": limit,
              "frame_path": frame_path or [], "document_id": document_id,
-             **({"compact": True} if compact else {})}, ("snapshot_paging",)
+             **({"compact": True} if compact else {}),
+             **({"text_offset": text_offset} if text_offset else {})}, ("snapshot_paging",)
         )
 
     @server.tool()
     async def regular_browser_act(
         tab_id: str,
-        action: Literal["click", "fill", "select", "check", "uncheck", "hover", "press", "type"],
+        action: Literal["click", "fill", "select", "check", "uncheck", "hover", "press", "type",
+                        "scroll", "open_frame"],
         selector: str,
         value: str = "",
         frame_path: list[str] | None = None, document_id: str | None = None,
+        dialog: Literal["dismiss", "accept"] = "dismiss",
     ):
         """One action on exactly one visible observed CSS match or snapshot ref. Credential fields blocked. No retries.
 
         Addon 0.3.2: pages a click tries to open in a new window/tab (blocked for
         synthetic clicks) open in the agent window instead; the result lists
-        their tab_id and origin under "opened".
+        their tab_id and origin under "opened" (sign-in pop-ups stay native).
+        Page alert/confirm/prompt raised by the action are answered with dialog
+        (default dismiss = Cancel) and listed under "dialogs"; use accept only
+        when the reported question matches the intended action.
+        scroll (value down/up/top/bottom/into_view) scrolls the target's
+        scrollable container or the page, for lists that load more on scroll.
+        open_frame opens a frame's page (e.g. an embedded cross-origin ATS form)
+        in the agent window without revealing its full address.
         Addon 0.3.0: selector may be "ref=eN" from the latest snapshot. press sends
         one key (value: Enter, Escape, ArrowDown/Up/Left/Right, Backspace, Delete,
         Home, End, PageUp, PageDown or " ") to page handlers without native
@@ -335,6 +358,7 @@ def create_regular_server():
                 "action": action,
                 "selector": selector,
                 "value": value, "frame_path": frame_path or [], "document_id": document_id,
+                **({"dialog": dialog} if dialog != "dismiss" else {}),
             }, ("hover",) if action == "hover" else ("act",)
         )
 
@@ -390,7 +414,7 @@ def create_regular_server():
         selector: str,
         paths: Annotated[list[str], Field(min_length=1, max_length=10)],
         frame_path: list[str] | None = None, document_id: str | None = None,
-        via_picker: bool = False,
+        via_picker: bool = False, via_drop: bool = False,
     ):
         """Attach explicit absolute local files to one observed file input (25 MiB total).
 
@@ -400,7 +424,9 @@ def create_regular_server():
         site's file chooser (e.g. LinkedIn "Upload resume", where no file input
         exists until clicked). The bridge clicks it once and attaches the files
         to the input the site asks to open, without any native dialog.
+        via_drop (addon 0.3.2+): selector is a drop area with no file input; the
+        files are delivered as one synthetic drag-and-drop. Inspect acceptance.
         """
-        return await upload(tab_id, selector, paths, frame_path, document_id, via_picker)
+        return await upload(tab_id, selector, paths, frame_path, document_id, via_picker, via_drop)
 
     return server

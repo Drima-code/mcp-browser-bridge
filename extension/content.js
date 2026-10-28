@@ -148,11 +148,12 @@
         if (uploads.size) throw new Error("Another upload is staged in this tab; abort it or wait for expiry");
         // Picker mode: the target is the visible control that opens the site's
         // file chooser (often a file input created only when clicked).
-        const element = request.picker === true ? pickerTrigger(request.selector) : fileTarget(request.selector);
-        if (request.picker !== true) validateFiles(element, request.files);
+        const viaControl = request.picker === true || request.drop === true;
+        const element = viaControl ? pickerTrigger(request.selector) : fileTarget(request.selector);
+        if (!viaControl) validateFiles(element, request.files);
         const id = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8,"0")).join("");
         uploads.set(id, {document, element, selector:request.selector, url:location.href, created:Date.now(),
-          picker:request.picker === true,
+          picker:request.picker === true, drop:request.drop === true,
           files:request.files.map(meta => ({...meta, chunks:[], received:0}))});
         return {upload_id:id, notice:"Staging only; no files attached yet"};
       }
@@ -165,7 +166,7 @@
       const state = uploads.get(request.upload_id);
       if (!state) throw new Error("Upload expired or document changed; inspect before retrying");
       if (state.document !== document || state.url !== location.href || !state.element.isConnected ||
-          (state.picker ? pickerTrigger(state.selector) : fileTarget(state.selector)) !== state.element)
+          (state.picker || state.drop ? pickerTrigger(state.selector) : fileTarget(state.selector)) !== state.element)
         throw new Error("Upload target changed; no attachment attempted");
       if (request.op === "upload_chunk") {
         if (!Number.isInteger(request.file_index) || request.file_index < 0 || request.file_index >= state.files.length)
@@ -182,7 +183,7 @@
         return {received:file.received};
       }
       if (request.op !== "upload_commit") throw new Error("Unsupported upload operation");
-      if (!state.picker) validateFiles(state.element, state.files);
+      if (!state.picker && !state.drop) validateFiles(state.element, state.files);
       if (state.files.some(f => f.received !== f.size)) throw new Error("Upload incomplete; no attachment attempted");
       const transfer = new DataTransfer();
       for (const file of state.files)
@@ -190,6 +191,7 @@
       // Delete before the only form mutation. A lost reply must not replay it.
       uploads.delete(request.upload_id);
       if (state.picker) return attachThroughPicker(state, transfer);
+      if (state.drop) return dropFiles(state, transfer);
       return attachFiles(state.element, state.files, transfer);
     }
     function attachFiles(input, files, transfer) {
@@ -200,6 +202,18 @@
       input.dispatchEvent(new Event("input", {bubbles:true,composed:true}));
       input.dispatchEvent(new Event("change", {bubbles:true,composed:true}));
       return {selected, notice:"Files selected once; the site may upload immediately. Inspect page validation and receipt. No automatic retry."};
+    }
+    // Drop areas without any file input accept files only through drag events.
+    function dropFiles(state, transfer) {
+      const e = state.element, rect = e.getBoundingClientRect();
+      const init = {bubbles:true, cancelable:true, composed:true, dataTransfer:transfer,
+        clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2};
+      for (const type of ["dragenter", "dragover", "drop"]) {
+        if (!e.isConnected || window.document !== document) throw new Error("Drop target changed; inspect before retrying");
+        e.dispatchEvent(new DragEvent(type, init));
+      }
+      return {selected:state.files.map(f => ({name:f.name, size:f.size, type:f.type})), via_drop:true,
+        notice:"Files dropped once; inspect whether the site accepted them. No automatic retry."};
     }
     function pickerTrigger(target) {
       const elements = query(target).filter(visible);
@@ -263,37 +277,57 @@
       }
       e.click(); // Exactly one activation, including labels/checkboxes/submit buttons.
     }
-    // Pages opened by a synthetic click (window.open, target=_blank links) are
-    // blocked by Firefox. While one agent click settles, hand such http(s)
-    // addresses to the extension, which opens them in the agent window. The
-    // full address goes only to the extension; the client sees the origin.
-    async function clickRoutingNewWindows(e) {
-      const routed = [];
-      const route = url => {
-        let parsed;
-        try { parsed = new URL(String(url ?? ""), location.href); } catch (_) { return; }
-        if (!/^https?:$/.test(parsed.protocol) || routed.length >= 3) return;
+    // Agent actions run inside a short guarded window. Firefox blocks new
+    // windows opened by synthetic clicks, and page dialogs (alert/confirm/prompt)
+    // would freeze the tab until someone answers. Meanwhile http(s) pages the
+    // action opens go to the agent window through the extension (the client sees
+    // only tab id and origin), sign-in pop-ups keep native behaviour because they
+    // report back to their opener, and dialogs get the requested answer and are
+    // reported. Hooks come off when the action settles.
+    const signIn = url => /^(accounts\.google\.com|login\.microsoftonline\.com|login\.live\.com|appleid\.apple\.com)$/.test(url.hostname) ||
+      (url.hostname === "github.com" && url.pathname.startsWith("/login")) ||
+      (/(^|\.)linkedin\.com$/.test(url.hostname) && url.pathname.startsWith("/oauth"));
+    async function guardedAction(request, run) {
+      const routed = [], dialogs = [], accept = request.dialog === "accept";
+      const parse = url => { try { return new URL(String(url ?? ""), location.href); } catch (_) { return null; } };
+      const route = parsed => {
+        if (routed.length >= 3) return;
         routed.push(browser.runtime.sendMessage({drima_route_open:parsed.href})
           .then(r => ({tab_id:r.tab_id, origin:parsed.origin}), error => ({origin:parsed.origin, error:error.message})));
       };
+      const record = (type, message) => { if (dialogs.length < 5)
+        dialogs.push({type, message:String(message ?? "").replace(/[\x00-\x1f\x7f]/g, " ").slice(0,300), answered:type === "alert" ? "ok" : accept ? "accept" : "dismiss"}); };
       const onClick = event => { // Registered last: runs after the page's own handlers.
         if (event.defaultPrevented) return;
         const link = event.target?.closest?.("a[href]");
         const target = (link?.target || "").toLowerCase();
-        if (link && target && !["_self","_top","_parent"].includes(target) && /^https?:$/.test(link.protocol)) {
-          event.preventDefault(); route(link.href);
+        const parsed = link && parse(link.href);
+        if (parsed && target && !["_self","_top","_parent"].includes(target) && /^https?:$/.test(parsed.protocol) && !signIn(parsed)) {
+          event.preventDefault(); route(parsed);
         }
       };
+      const page = window.wrappedJSObject, nativeOpen = page?.open;
+      const restore = [
+        pageHook(page, "open", function (url, target, features) {
+          const parsed = parse(url);
+          if (parsed && /^https?:$/.test(parsed.protocol) && !signIn(parsed)) { route(parsed); return null; }
+          return nativeOpen.call(page, url, target, features);
+        }),
+        pageHook(page, "alert", function (message) { record("alert", message); }),
+        pageHook(page, "confirm", function (message) { record("confirm", message); return accept; }),
+        pageHook(page, "prompt", function (message, fallback) { record("prompt", message); return accept ? String(fallback ?? "") : null; })];
       window.addEventListener("click", onClick);
-      const restore = pageHook(window.wrappedJSObject, "open", function (url) { route(url); return null; });
-      try { click(e); }
-      finally { window.removeEventListener("click", onClick); }
-      await settle(400); // Sites often open the new page right after their handler.
-      restore();
+      let result;
+      try { result = await run(); }
+      finally {
+        window.removeEventListener("click", onClick);
+        // Sites often open a page or ask for confirmation right after their handler.
+        if (["click", "press", "check", "uncheck", "select"].includes(request.action)) await settle(400);
+        restore.forEach(undo => undo());
+      }
       const opened = await Promise.all(routed);
-      return {ok:true, ...(opened.length ? {opened} : {}),
-        notice:"Action invoked once; inspect receipt before claiming submission. No automatic retry." +
-          (opened.length ? " New pages went to the agent window." : "")};
+      return {...result, ...(opened.length ? {opened} : {}), ...(dialogs.length ? {dialogs} : {}),
+        ...(opened.length ? {notice:result.notice + " New pages went to the agent window."} : {})};
     }
     function snapshot(maxChars, request = {}) {
       const offset = request.offset ?? 0, limit = request.limit ?? 100;
@@ -379,13 +413,19 @@
       const frames = frameElements.slice(0,50).map(e => {
         let accessible = false;
         try { accessible = !!e.contentDocument && e.contentWindow.location.origin === location.origin; } catch (_) { /* Cross-origin. */ }
-        return {selector:selector(e), title:(e.title || "").slice(0,256), accessible,
+        let frameOrigin = null;
+        try { const u = new URL(e.src, location.href); if (/^https?:$/.test(u.protocol)) frameOrigin = u.origin; } catch (_) { /* No address. */ }
+        return {selector:selector(e), ref:refFor(e) ? `ref=${refFor(e)}` : undefined, title:(e.title || "").slice(0,256), origin:frameOrigin, accessible,
           reason:accessible ? "same_origin" : "cross_origin_or_unavailable"};
       }).filter(frame => {
         frameBudget += JSON.stringify(frame).replace(/[^\x00-\x7f]/g, "\\u0000").length;
         return frameBudget <= 16000;
       });
-      return {title: document.title.slice(0,512), text: text.slice(0,maxChars), truncated: text.length > maxChars,
+      const textOffset = request.text_offset ?? 0;
+      if (!Number.isInteger(textOffset) || textOffset < 0 || textOffset > 10000000) throw new Error("Invalid text_offset");
+      const textEnd = textOffset + maxChars;
+      return {title: document.title.slice(0,512), text: text.slice(textOffset,textEnd), truncated: text.length > textEnd,
+        text_length:text.length, next_text_offset:text.length > textEnd ? textEnd : null,
         document_id:documentId, ready_state:document.readyState, frames, frames_truncated:frames.length < frameElements.length, controls, controls_total:candidates.length, controls_offset:offset,
         controls_truncated:next < candidates.length,
         next_offset:next < candidates.length ? next : null,
@@ -413,7 +453,7 @@
             new MouseEvent(type,init));
         }
       }
-      else if (action === "click") return clickRoutingNewWindows(e);
+      else if (action === "click") { click(e); }
       else if (action === "fill") {
         if (e.readOnly) throw new Error("Read-only control; use the visible widget");
         if (e.isContentEditable) {
@@ -506,6 +546,31 @@
         }
         if (e.value !== start + value) return {ok:true, value:e.value.slice(0,1024),
           notice:"Typed once; the page altered the text. Inspect before another action."};
+      } else if (action === "scroll") {
+        // Scroll the element's scrollable container (or the page), e.g. to load
+        // more results; into_view brings the element itself on screen.
+        if (!value || value === "into_view") e.scrollIntoView({block:"center", inline:"nearest"});
+        else {
+          if (!["down","up","top","bottom"].includes(value)) throw new Error("Scroll value must be down, up, top, bottom or into_view");
+          const scrollable = n => n.scrollHeight > n.clientHeight + 1 && /(auto|scroll|overlay)/.test(window.getComputedStyle(n).overflowY);
+          let box = e;
+          while (box && box !== document.documentElement && !scrollable(box)) box = box.parentElement;
+          if (!box || box === document.documentElement || box === document.body) box = document.scrollingElement || document.documentElement;
+          const before = box.scrollTop;
+          if (value === "top") box.scrollTop = 0;
+          else if (value === "bottom") box.scrollTop = box.scrollHeight;
+          else box.scrollTop += Math.round(box.clientHeight * (value === "down" ? 0.8 : -0.8));
+          return {ok:true, moved:box.scrollTop !== before, at_end:box.scrollTop + box.clientHeight >= box.scrollHeight - 2,
+            notice:"Scrolled once; inspect again for newly loaded content."};
+        }
+      } else if (action === "open_frame") {
+        // Embedded forms from another site (cross-origin frames) cannot be read
+        // here; open the frame's own page in the agent window instead.
+        if (!e.matches("iframe,frame")) throw new Error("Not a frame");
+        const parsed = (() => { try { return new URL(e.src, location.href); } catch (_) { return null; } })();
+        if (!parsed || !/^https?:$/.test(parsed.protocol)) throw new Error("Frame has no http(s) address");
+        return browser.runtime.sendMessage({drima_route_open:parsed.href}).then(r => ({ok:true,
+          opened:[{tab_id:r.tab_id, origin:parsed.origin}], notice:"Frame page opened once in the agent window."}));
       } else throw new Error("Unsupported action");
       return {ok:true, notice:"Action invoked once; inspect receipt before claiming submission. No automatic retry."};
     }
@@ -536,7 +601,7 @@
       if (request.op === "wait") return wait(request);
       if (["upload_begin", "upload_chunk", "upload_commit", "upload_abort"].includes(request.op))
         return Promise.resolve(upload(request));
-      if (request.op === "act") return Promise.resolve(act(request.action,request.selector,request.value || "",request));
+      if (request.op === "act") return guardedAction(request, () => act(request.action,request.selector,request.value || "",request));
       throw new Error("Unsupported operation");
     };
   }

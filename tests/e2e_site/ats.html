@@ -1,0 +1,40 @@
+<!doctype html><meta charset="utf-8"><title>Fake ATS form</title>
+<form id="f" onsubmit="event.preventDefault();document.getElementById('receipt').textContent='Application received'">
+ <label>Full name <input id="name" name="name" required></label>
+ <label>Country <select id="country"><option value="">--</option><option value="cl">Chile</option></select></label>
+ <fieldset><legend>Remote?</legend><label><input type="radio" name="remote" value="yes"> Yes</label><label><input type="radio" name="remote" value="no"> No</label></fieldset>
+ <label><input type="checkbox" id="consent" required> I agree</label>
+ <label>Search resume <input id="combo" autocomplete="off"></label><ul id="results" class="results"></ul><p id="picked">none</p>
+ <div id="editor" contenteditable="true" style="min-height:40px;border:1px solid">old</div>
+ <label>Password <input type="password" id="pw"></label>
+ <div id="dz"><input type="file" id="hiddenfile" style="display:none" accept=".pdf"><span>Drop CV or click</span></div><p id="hf">none</p>
+ <custom-q></custom-q>
+ <button type="submit" id="submit">Submit</button>
+</form>
+<p id="receipt"></p>
+<div id="feed" style="height:120px;overflow:auto"></div><p id="feedcount"></p>
+<iframe id="same" src="/frame.html" title="Same origin" style="height:60px"></iframe>
+<iframe id="cross" src="" title="Embedded ATS" style="height:60px"></iframe>
+<article id="long"></article>
+<script>
+const all = ['CV English', 'CV Español IA', 'CV Español IA — WiTi'];
+let active = 0;
+const combo = document.getElementById('combo'), results = document.getElementById('results');
+combo.addEventListener('input', () => {
+  const m = all.filter(x => x.toLowerCase().includes(combo.value.toLowerCase()));
+  results.innerHTML = m.map(x => '<li>' + x + '</li>').join(''); active = 0;
+});
+combo.addEventListener('keydown', e => {
+  if (e.keyCode === 40) active++;
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('picked').textContent = results.querySelectorAll('li')[active].textContent; }
+});
+document.getElementById('hiddenfile').onchange = e => document.getElementById('hf').textContent = e.target.files[0].name;
+customElements.define('custom-q', class extends HTMLElement {
+  connectedCallback() { const r = this.attachShadow({mode: 'open'}); r.innerHTML = '<label>Shadow answer <input id="sq"></label>'; }
+});
+const feed = document.getElementById('feed');
+let n = 0; const more = () => { for (let i = 0; i < 10; i++) { const d = document.createElement('div'); d.textContent = 'Job ' + (++n); d.style.height = '30px'; feed.append(d); } document.getElementById('feedcount').textContent = n + ' jobs'; };
+more(); feed.addEventListener('scroll', () => { if (feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 5 && n < 50) more(); });
+document.getElementById('long').textContent = 'Long job description. '.repeat(1500) + 'END-OF-DESCRIPTION';
+document.getElementById('cross').src = location.protocol + '//localhost:' + (Number(location.port) + 1) + '/embed.html?for=acme&token=55';
+</script>
