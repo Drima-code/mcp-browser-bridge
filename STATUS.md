@@ -1,3 +1,22 @@
+# Attention flags 0.2.9 — 2026-10-28
+
+Prepared 0.2.9 (includes unreleased 0.2.8). New `attention` native operation and
+`regular_browser_attention` tool / CLI op: set (reason 1-80 chars, control chars
+stripped), clear, list. Top-frame title marker re-applied on site title changes and
+after reload (only for still-allowed tabs); red badge count, per-tab "!" badge;
+popup list with Go/Done (text nodes only); optional `notifications` permission
+enabled from the popup, click focuses the tab; optional focus on set. Flags are
+in-memory and removed on tab close. Capability "attention" negotiated.
+Documented per-profile sockets via DRIMA_REGULAR_BROWSER_DATA (no code change).
+
+Validation: 43 tests pass (new: background attention lifecycle incl. notification,
+focus, reload re-mark, close and forged popup sender; title marker survives site
+title change; popup renders hostile titles as text). Ruff, JS syntax, Mozilla lint
+0/0/0 and disposable-profile installed-addon smoke pass. Live title/notification
+behavior in normal Firefox not yet observed (needs signed install).
+Unsigned archive: artifacts/mcp-browser-bridge-0.2.9.zip
+SHA256: c4b3e1775ebd82b79f0a6b03982055ae12757ef0b605dfd0bca829a07cdab8d1
+
 # Form discovery and editor update 0.2.8 — 2026-10-27
 
 Prepared 0.2.8 from live friction observed during normal-Firefox use (details of

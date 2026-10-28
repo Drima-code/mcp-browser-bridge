@@ -257,3 +257,27 @@ uv run --frozen mcp-browser-bridge call snapshot '{"tab_id":"APPROVED_ID","frame
 uv run --frozen mcp-browser-bridge call wait '{"tab_id":"APPROVED_ID","selector":"#viewer >>> #save","timeout_ms":3000}'
 uv run --frozen mcp-browser-bridge call focus '{"tab_id":"APPROVED_ID"}'
 ```
+
+## Tabs that need the user (0.2.9)
+
+`regular_browser_attention(action="set", tab_id, reason)` flags an approved tab
+for the user: the title gets a red marker and short reason (re-applied after
+reloads and site title changes), the toolbar badge shows a red count and the
+popup lists flagged tabs with **Go to tab** and **Done**. `notify` sends a desktop
+notification when the user enabled the optional `notifications` permission in the
+popup; `focus=true` also activates the tab once. `action="clear"` removes a flag
+and `action="list"` returns flagged tabs. Flags live in memory, never touch the
+site beyond the title text, and disappear when the tab closes.
+
+## Several Firefox profiles
+
+Each native host serves one socket at `$DRIMA_REGULAR_BROWSER_DATA/regular-browser.sock`
+(default `~/.local/share/drima-browser`). Firefox passes its environment to the
+host, so a second profile can use its own private directory, for example:
+
+```sh
+DRIMA_REGULAR_BROWSER_DATA="$HOME/.local/share/drima-browser/work" firefox -P work
+```
+
+Give the MCP server the same variable (for example an `env` entry in the client's
+MCP configuration). Install the addon in each profile that should be reachable.

@@ -1,6 +1,6 @@
 # Install MCP Browser Bridge permanently in normal Firefox
 
-Version 0.2.8, Firefox 142+ on Linux. The archive built here is **unsigned**.
+Version 0.2.9, Firefox 142+ on Linux. The archive built here is **unsigned**.
 Normal Firefox installs a permanent copy only after Mozilla signs it. A public
 store listing is optional; self-distribution is sufficient for personal use.
 Do not disable Firefox signature checks or change browser security settings.
@@ -14,7 +14,7 @@ npx --yes web-ext lint --source-dir extension --warnings-as-errors
 uv run --frozen python scripts/package_extension.py
 ```
 
-Upload `artifacts/mcp-browser-bridge-0.2.8.zip`. The archive contains only the six
+Upload `artifacts/mcp-browser-bridge-0.2.9.zip`. The archive contains only the six
 extension assets, license and privacy notice. It contains no browser profiles,
 credentials, job applications or native host executable. Source JS is plain,
 readable code with no build/minification step or remote executable code.
@@ -155,3 +155,9 @@ and reconnect MCP clients. No new permissions or host IDs. Adds drop-zone file
 inputs, custom dropdown options, question-container labels, sanitized link
 targets and selection-aware rich-text filling. Release notes are in
 [RELEASE_NOTES_0.2.8.md](RELEASE_NOTES_0.2.8.md).
+
+## Attention flags update 0.2.9
+
+Sign/install the same-ID 0.2.9 archive (it includes 0.2.8), reload website tabs
+and reconnect MCP clients. Adds an optional `notifications` permission, requested
+only from the popup button. Release notes: [RELEASE_NOTES_0.2.9.md](RELEASE_NOTES_0.2.9.md).

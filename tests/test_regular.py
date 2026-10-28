@@ -162,7 +162,7 @@ def test_background_permissions_and_origin_revocation():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / "extension/manifest.json").read_text())
     assert set(manifest["permissions"]) == {"activeTab", "nativeMessaging", "storage"}
-    assert set(manifest["optional_permissions"]) == {"downloads", "http://*/*", "https://*/*"}
+    assert set(manifest["optional_permissions"]) == {"downloads", "notifications", "http://*/*", "https://*/*"}
     harness = r"""
 const vm=require('vm'), fs=require('fs'), assert=require('assert');
 const events={}, messages=[], forwarded=[];
@@ -176,13 +176,13 @@ const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconne
 const browser={windows:{update:async(id,r)=>{assert.equal(r.focused,true);windowFocus++;}},
  tabs:{get:async id=>tabs.get(id),executeScript:async()=>{},
  update:async(id,r)=>{assert.equal(r.active,true);activations++;tabs.get(id).active=true;},
- sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.2.8'}:{ok:true}},
+ sendMessage:async(id,r)=>{forwarded.push(r);return r.op==='content_status'?{content_version:'0.2.9'}:{ok:true}},
  query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),
  onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.2.8'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.2.9'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>{connections++;return port},onMessage:event('ui')},
  permissions:{contains:async()=>granted,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>settings,set:async s=>{settings={...settings,...s}}}},
- browserAction:{setBadgeText:async()=>{}}};
+ browserAction:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{browser,URL,Map,Set});
 const sender={id:'bridge',url:'moz-extension://bridge/popup.html'};
 const ui=r=>events.ui(r,sender);
@@ -290,7 +290,7 @@ async def test_popup_explicit_consent_denial_and_stop():
         await page.set_content((extension / "popup.html").read_text())
         await page.evaluate("""() => {
           window.requests=[]; window.grant=false;
-          window.state={mode:'manual',eligible:true,approved:false,tabId:7};
+          window.state={mode:'manual',eligible:true,approved:false,tabId:7,attention:[]};
           window.browser={runtime:{sendMessage:async r=>{
             requests.push(r.ui);
             if(r.ui==='all')state.mode='all';
@@ -519,7 +519,7 @@ async def test_chunked_upload_to_real_firefox_file_input(tmp_path, monkeypatch):
             calls.append(payload)
             assert len(json.dumps(payload).encode()) < 256 * 1024
             if payload['op'] == 'status':
-                return {'protocol_version': 1, 'addon_version': '0.2.8', 'capabilities': ['upload']}
+                return {'protocol_version': 1, 'addon_version': '0.2.9', 'capabilities': ['upload']}
             return await page.evaluate('r=>handler({drima:true,...r})', payload)
         monkeypatch.setattr(regular, 'request', bridge)
         result = await regular.upload('7', '#cv', [str(path)])
@@ -589,7 +589,7 @@ async def test_upload_path_limits_and_unknown_commit(tmp_path, monkeypatch):
     async def fake(payload):
         calls.append(payload)
         if payload['op'] == 'status':
-            return {'protocol_version': 1, 'addon_version': '0.2.8', 'capabilities': ['upload']}
+            return {'protocol_version': 1, 'addon_version': '0.2.9', 'capabilities': ['upload']}
         if payload['op'] == 'upload_begin':
             return {'upload_id': 'test'}
         if payload['op'] == 'upload_commit':
@@ -626,3 +626,97 @@ async def test_upload_tool_is_discoverable():
     for name in ('regular_browser_snapshot', 'regular_browser_act', 'regular_browser_upload', 'regular_browser_wait'):
         assert {'frame_path', 'document_id'} <= schemas[name]['properties'].keys()
     assert schemas['regular_browser_wait']['properties']['timeout_ms']['maximum'] == 10000
+
+
+def test_attention_flags_badge_notify_focus_and_clear():
+    root = Path(__file__).resolve().parents[1]
+    harness = r"""
+const vm=require('vm'), fs=require('fs'), assert=require('assert');
+const events={}, messages=[], sent=[], badges=[], colors=[], notes=[], cleared=[];
+let listener, granted=true, notifications=false, active=1, activations=0;
+const tabs=new Map([[1,{id:1,title:'Apply',url:'https://jobs.example/apply?token=x',windowId:7}],
+ [2,{id:2,title:'Other',url:'https://other.example/',windowId:7}]]);
+const event=name=>({addListener:fn=>events[name]=fn});
+const port={onMessage:{addListener:fn=>listener=fn},onDisconnect:event('disconnect'),postMessage:m=>messages.push(m)};
+const browser={windows:{update:async()=>{}},
+ tabs:{get:async id=>{if(!tabs.has(id))throw new Error('no tab');return tabs.get(id)},executeScript:async()=>{},
+  update:async id=>{activations++;},
+  sendMessage:async(id,r,o)=>{sent.push({id,r,o});return r.op==='content_status'?{content_version:'0.2.9'}:{ok:true}},
+  query:async q=>q.active?[tabs.get(active)]:Array.from(tabs.values()),onRemoved:event('removed'),onUpdated:event('updated')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.2.9'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
+ permissions:{contains:async p=>p.permissions?.[0]==='notifications'?notifications:granted,onRemoved:event('permissionRemoved')},
+ storage:{local:{get:async()=>({mode:'all'}),set:async()=>{}}},
+ notifications:{create:async(id,o)=>notes.push([id,o]),clear:async id=>cleared.push(id),onClicked:event('noteClicked')},
+ browserAction:{setBadgeText:async b=>badges.push(b),setBadgeBackgroundColor:async c=>colors.push(c.color)}};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{browser,URL,Map,Set,String,Number,Date});
+const sender={id:'bridge',url:'moz-extension://bridge/popup.html'};
+const ui=r=>events.ui(r,sender);
+const call=async r=>{await listener({id:'x',...r});return messages.at(-1)};
+(async()=>{
+ await ui({ui:'state'});
+ assert((await call({op:'status'})).result.capabilities.includes('attention'));
+ assert((await call({op:'attention',action:'set',tab_id:'1',reason:''})).error.includes('1-80'));
+ assert((await call({op:'attention',action:'set',tab_id:'1',reason:'x'.repeat(81)})).error.includes('1-80'));
+ // Without the optional permission: title marker and badge, no notification.
+ let r=(await call({op:'attention',action:'set',tab_id:'1',reason:'CAPTCHA\nnow'})).result;
+ assert.equal(r.reason,'CAPTCHA now'); assert.equal(r.notified,false); assert.equal(r.title_marked,true);
+ const mark=sent.filter(s=>s.r.op==='attention_mark').at(-1);
+ assert.equal(mark.o.frameId,0); assert.equal(mark.r.reason,'CAPTCHA now');
+ assert.equal(badges.filter(b=>b.tabId===undefined).at(-1).text,'1'); assert.equal(colors.at(-1),'#d70022');
+ // With permission: notification, and focus brings the tab forward once.
+ notifications=true;
+ r=(await call({op:'attention',action:'set',tab_id:'2',reason:'Decision',focus:true})).result;
+ assert.equal(r.notified,true); assert.equal(r.focused,true); assert.equal(activations,1);
+ assert.equal(notes.at(-1)[0],'attention-2'); assert(notes.at(-1)[1].message.startsWith('Decision'));
+ assert.equal(badges.filter(b=>b.tabId===undefined).at(-1).text,'2');
+ let list=(await call({op:'attention',action:'list'})).result.tabs;
+ assert.deepEqual(list.map(t=>t.tab_id),['1','2']); assert.equal(list[0].url,'https://jobs.example/apply');
+ assert.equal((await ui({ui:'state'})).attention.length,2);
+ // Notification click focuses; popup Done clears and unmarks.
+ events.noteClicked('attention-1'); await new Promise(r=>setTimeout(r,0));
+ assert.equal(activations,2);
+ await ui({ui:'attention-done',tabId:1});
+ assert(sent.some(s=>s.id===1&&s.r.op==='attention_unmark'));
+ assert.deepEqual(cleared,['attention-1']);
+ await assert.rejects(()=>ui({ui:'attention-go',tabId:1}),/no longer/);
+ await assert.rejects(()=>events.ui({ui:'attention-done',tabId:2},{id:'bridge',url:'https://evil.example'}),/popup/);
+ // Reload restores the marker; closing the tab drops the flag.
+ const before=sent.filter(s=>s.r.op==='attention_mark').length;
+ events.updated(2,{status:'complete'}); await new Promise(r=>setTimeout(r,0));
+ assert.equal(sent.filter(s=>s.r.op==='attention_mark').length,before+1);
+ events.removed(2); await new Promise(r=>setTimeout(r,0));
+ assert.equal((await call({op:'attention',action:'list'})).result.tabs.length,0);
+ assert.equal(badges.filter(b=>b.tabId===undefined).at(-1).text,'ALL');
+ r=(await call({op:'attention',action:'clear',tab_id:'1'})).result; assert.equal(r.cleared,false);
+ console.log('ok');
+})().catch(e=>{console.error(e);process.exit(1)});
+"""
+    result = subprocess.run(["node", "-e", harness, str(root / "extension/background.js")],
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+async def test_popup_lists_waiting_tabs_as_text_with_go_and_done():
+    extension = Path(__file__).resolve().parents[1] / "extension"
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content((extension / "popup.html").read_text())
+        await page.evaluate("""() => {
+          window.calls=[];window.flags=[{tab_id:'4',title:'<img src=x onerror=window.pwned=1>Apply',url:'https://a.example/',reason:'CAPTCHA'}];
+          window.browser={runtime:{sendMessage:async r=>{calls.push(r);
+            if(r.ui==='state')return {mode:'manual',eligible:false,connected:true,addonVersion:'0.2.9',attention:flags};
+            if(r.ui==='attention-done')flags=[];
+            return {ok:true};}},permissions:{request:async()=>false,remove:async()=>true}};
+        }""")
+        await page.evaluate((extension / "popup.js").read_text())
+        await page.wait_for_function("document.querySelectorAll('#attention li').length===1")
+        assert await page.locator('#attention li span').text_content() == 'CAPTCHA — <img src=x onerror=window.pwned=1>Apply'
+        assert await page.evaluate("document.querySelector('#attention img')") is None
+        await page.get_by_role('button', name='Go to tab').click()
+        await page.wait_for_function("calls.some(c=>c.ui==='attention-go'&&c.tabId===4)")
+        await page.get_by_role('button', name='Done').click()
+        await page.wait_for_function("document.querySelectorAll('#attention li').length===0")
+        assert not await page.locator('#attention-empty').is_hidden()
+        assert await page.evaluate("window.pwned") is None
+        await browser.close()

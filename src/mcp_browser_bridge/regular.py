@@ -279,6 +279,30 @@ def create_regular_server():
         )
 
     @server.tool()
+    async def regular_browser_attention(
+        action: Literal["set", "clear", "list"],
+        tab_id: str | None = None,
+        reason: Annotated[str, Field(max_length=80)] = "",
+        notify: bool = True,
+        focus: bool = False,
+    ):
+        """Flag a tab that needs the user (CAPTCHA, login, a decision), clear it, or list flags.
+
+        set marks the tab title with a red marker and short reason, shows a red
+        count on the addon icon and lists it in the popup. notify sends a desktop
+        notification when the user enabled it in the popup; focus also brings
+        the tab to the front once. Flags clear when the client or the user (popup
+        Done) clears them or the tab closes. Never acts on the site. Addon 0.2.9+.
+        """
+        if action != "list" and not tab_id:
+            raise ValueError("tab_id is required to set or clear a flag")
+        payload = {"op": "attention", "action": action, "reason": reason,
+                   "notify": notify, "focus": focus}
+        if tab_id:
+            payload["tab_id"] = tab_id
+        return await checked_request(payload, ("attention",))
+
+    @server.tool()
     async def regular_browser_downloads(
         tab_id: str,
         action: Literal["watch", "list", "stop"],

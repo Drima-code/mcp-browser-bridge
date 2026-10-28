@@ -8,6 +8,25 @@ async function render() {
   $("downloads").disabled = !!state.downloadsPermission;
   $("downloads-off").disabled = !state.downloadsPermission;
   $("reconnect").disabled = state.connected;
+  $("notifications").disabled = !!state.notificationsPermission;
+  $("notifications-off").disabled = !state.notificationsPermission;
+  const list = $("attention");
+  list.replaceChildren();
+  $("attention-empty").hidden = state.attention.length > 0;
+  for (const flag of state.attention) {
+    // Text nodes only: titles and reasons come from websites and clients.
+    const item = document.createElement("li");
+    const text = document.createElement("span");
+    text.textContent = `${flag.reason} — ${flag.title || flag.url}`;
+    const go = document.createElement("button");
+    go.textContent = "Go to tab";
+    go.addEventListener("click", () => browser.runtime.sendMessage({ui:"attention-go",tabId:Number(flag.tab_id)}).then(render).catch(fail));
+    const done = document.createElement("button");
+    done.textContent = "Done";
+    done.addEventListener("click", () => browser.runtime.sendMessage({ui:"attention-done",tabId:Number(flag.tab_id)}).then(render).catch(fail));
+    item.append(text, go, done);
+    list.append(item);
+  }
   $("google-account-selection").checked = state.googleAccountSelection === true;
   $("toggle").disabled = state.mode !== "manual" || !state.eligible;
   $("toggle").textContent = state.approved ? "Revoke this tab" : "Approve this tab";
@@ -29,6 +48,17 @@ $("downloads").addEventListener("click", async () => {
 });
 $("downloads-off").addEventListener("click", async () => {
   try { await browser.permissions.remove({permissions:["downloads"]}); await render(); }
+  catch (error) { fail(error); }
+});
+$("notifications").addEventListener("click", async () => {
+  try {
+    const granted = await browser.permissions.request({permissions:["notifications"]});
+    if (!granted) throw new Error("Notification permission denied; flags still show in tab titles and here.");
+    await browser.runtime.sendMessage({ui:"notifications"}); await render();
+  } catch (error) { fail(error); }
+});
+$("notifications-off").addEventListener("click", async () => {
+  try { await browser.permissions.remove({permissions:["notifications"]}); await render(); }
   catch (error) { fail(error); }
 });
 $("reconnect").addEventListener("click", async () => {

@@ -13,8 +13,82 @@ function eligible(tab) {
 function origin(url) { return new URL(url).origin; }
 function safeUrl(url) { const u = new URL(url); return u.origin + u.pathname; }
 const PROTOCOL_VERSION = 1;
-const CONTENT_VERSION = "0.2.8";
-const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection"];
+const CONTENT_VERSION = "0.2.9";
+const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention"];
+// Tabs an agent flagged for the user (CAPTCHA, login, a decision). In memory only.
+const attention = new Map();
+let notificationListener = false;
+function attentionReason(reason) {
+  const text = typeof reason === "string" ? reason.replace(/[\x00-\x1f\x7f]/g, " ").trim() : "";
+  if (!text || text.length > 80) throw new Error("Attention reason must be 1-80 characters.");
+  return text;
+}
+async function notificationsGranted() {
+  return !!browser.notifications && await browser.permissions.contains({permissions:["notifications"]});
+}
+async function installNotificationListener() {
+  if (notificationListener || !await notificationsGranted()) return;
+  browser.notifications.onClicked.addListener(notificationId => {
+    const id = Number(String(notificationId).replace(/^attention-/, ""));
+    if (attention.has(id)) focusTab(id).catch(() => {});
+  });
+  notificationListener = true;
+}
+async function markTitle(id, reason) {
+  // Best effort, top frame only: the flag itself lives here, not in the page.
+  try {
+    const tab = await browser.tabs.get(id);
+    if (!await allowed(tab)) return false;
+    await browser.tabs.executeScript(id,{file:"content.js"});
+    await browser.tabs.sendMessage(id,{drima:true,op:reason ? "attention_mark" : "attention_unmark",reason},{frameId:0});
+    return true;
+  } catch (_) { return false; }
+}
+async function focusTab(id) {
+  const tab = await browser.tabs.get(id);
+  await browser.tabs.update(id,{active:true});
+  const current = await browser.tabs.get(id);
+  if (current.url !== tab.url || !await allowed(current)) throw new Error("Tab changed during activation; inspect before continuing.");
+  await browser.windows.update(current.windowId,{focused:true});
+  return current;
+}
+async function attentionList() {
+  const result = [];
+  for (const [id, flag] of attention) {
+    const tab = await browser.tabs.get(id).catch(() => null);
+    if (!tab) { attention.delete(id); continue; }
+    if (await allowed(tab)) result.push({tab_id:String(id), title:tab.title, url:safeUrl(tab.url), reason:flag.reason, since:flag.since});
+  }
+  return result;
+}
+async function clearAttention(id) {
+  const had = attention.delete(id);
+  if (had) {
+    await markTitle(id, "");
+    if (await notificationsGranted()) await browser.notifications.clear(`attention-${id}`).catch(() => {});
+    await refreshBadge();
+  }
+  return had;
+}
+async function attentionOperation(request, tab) {
+  if (request.action === "clear")
+    return {tab_id:String(tab.id), cleared:await clearAttention(tab.id), notice:"Flag removed; no site action sent."};
+  if (request.action !== "set") throw new Error("Unsupported attention action");
+  const reason = attentionReason(request.reason);
+  attention.set(tab.id,{reason, since:new Date().toISOString()});
+  const marked = await markTitle(tab.id, reason);
+  await refreshBadge();
+  let notified = false, focused = false;
+  if (request.notify !== false && await notificationsGranted()) {
+    await installNotificationListener();
+    await browser.notifications.create(`attention-${tab.id}`,{type:"basic",
+      title:"MCP Browser Bridge: a tab needs you", message:`${reason} — ${tab.title || safeUrl(tab.url)}`.slice(0,200)});
+    notified = true;
+  }
+  if (request.focus === true) { await focusTab(tab.id); focused = true; }
+  return {tab_id:String(tab.id), attention:true, reason, title_marked:marked, notified, focused,
+    notice:"Flag stays until the client or the user (popup Done) clears it, or the tab closes. No site action sent."};
+}
 const watches = new Map(), pendingDownloads = new Map();
 const watchLifetime = 5 * 60 * 1000;
 let downloadListeners = false;
@@ -172,9 +246,13 @@ async function currentContent(tab) {
   return reply.content_version;
 }
 async function refreshBadge() {
-  await browser.browserAction.setBadgeText({text: mode === "all" ? "ALL" : ""});
+  // A waiting tab outranks the access-mode label: show the count in red.
+  await browser.browserAction.setBadgeText({text: attention.size ? String(attention.size) : mode === "all" ? "ALL" : ""});
+  await browser.browserAction.setBadgeBackgroundColor({color: attention.size ? "#d70022" : null});
   for (const id of approved.keys())
-    await browser.browserAction.setBadgeText({tabId: id, text: "ON"});
+    await browser.browserAction.setBadgeText({tabId: id, text: attention.has(id) ? "!" : "ON"});
+  for (const id of attention.keys())
+    if (!approved.has(id)) await browser.browserAction.setBadgeText({tabId: id, text: "!"});
 }
 async function allAccess() {
   return mode === "all" && await browser.permissions.contains(allSites);
@@ -185,6 +263,7 @@ async function allowed(tab) {
 async function dispatch(request) {
   await ready;
   if (request.op === "status" && request.tab_id == null) return status();
+  if (request.op === "attention" && request.action === "list") return {tabs:await attentionList()};
   if (request.op === "tabs") {
     const candidates = await allAccess() ? await browser.tabs.query({}) :
       await Promise.all(Array.from(approved.keys(), id => browser.tabs.get(id).catch(() => null)));
@@ -199,12 +278,10 @@ async function dispatch(request) {
   const tab = await browser.tabs.get(id);
   if (!await allowed(tab)) throw new Error("Tab not approved. Use the extension popup to grant access.");
   if (request.op === "focus") {
-    await browser.tabs.update(id,{active:true});
-    const current = await browser.tabs.get(id);
-    if (current.url !== tab.url || !await allowed(current)) throw new Error("Tab changed during activation; inspect before continuing.");
-    await browser.windows.update(current.windowId,{focused:true});
+    const current = await focusTab(id);
     return {tab_id:String(id),active:true,window_id:current.windowId,notice:"Tab and window activated once."};
   }
+  if (request.op === "attention") return attentionOperation(request,tab);
   if (request.op === "status") return status(tab);
   if (request.op === "downloads") return downloadOperation(request,tab);
   if (!["snapshot", "wait", "act", "upload_begin", "upload_chunk", "upload_commit", "upload_abort"].includes(request.op)) throw new Error("Unsupported operation");
@@ -244,6 +321,7 @@ const ready = (async () => {
     mode = "all";
     connect();
   }
+  await installNotificationListener();
   await refreshBadge();
 })();
 browser.runtime.onMessage.addListener(async (request, sender) => {
@@ -254,6 +332,8 @@ browser.runtime.onMessage.addListener(async (request, sender) => {
   if (request.ui === "state") {
     const [tab] = await browser.tabs.query({active: true, currentWindow: true});
     return {mode, connected: !!port, downloadsPermission:await browser.permissions.contains({permissions:["downloads"]}),
+      notificationsPermission:await browser.permissions.contains({permissions:["notifications"]}),
+      attention:await attentionList(),
       addonVersion:browser.runtime.getManifest().version, googleAccountSelection, eligible: !!tab && eligible(tab),
       approved: !!tab && eligible(tab) && approved.get(tab.id) === origin(tab.url), tabId: tab?.id};
   }
@@ -278,6 +358,16 @@ browser.runtime.onMessage.addListener(async (request, sender) => {
     if (!await browser.permissions.contains({permissions:["downloads"]}))
       throw new Error("Firefox download permission is required; enable it with the popup button.");
     await installDownloadListeners(); return {ok:true};
+  }
+  if (request.ui === "notifications") {
+    if (!await notificationsGranted()) throw new Error("Firefox notification permission is required; enable it with the popup button.");
+    await installNotificationListener(); return {ok:true};
+  }
+  if (request.ui === "attention-go" || request.ui === "attention-done") {
+    const id = Number(request.tabId);
+    if (!attention.has(id)) throw new Error("That tab no longer needs attention.");
+    if (request.ui === "attention-go") await focusTab(id); else await clearAttention(id);
+    return {ok:true};
   }
   if (request.ui === "manual") { await manualMode(); return {ok: true}; }
   if (request.ui === "all") {
@@ -317,8 +407,13 @@ browser.permissions.onRemoved.addListener(async () => {
   }
   if (mode === "all" && !await browser.permissions.contains(allSites)) await manualMode();
 });
-browser.tabs.onRemoved.addListener(id => { approved.delete(id); clearTabDownloads(id); });
+browser.tabs.onRemoved.addListener(id => {
+  approved.delete(id); clearTabDownloads(id);
+  if (attention.delete(id)) refreshBadge().catch(() => {});
+});
 browser.tabs.onUpdated.addListener((id, change) => {
+  // A reload or navigation replaces the page title; restore the marker.
+  if (change.status === "complete" && attention.has(id)) markTitle(id, attention.get(id).reason);
   if (change.url) for (const watch of watches.values())
     if (watch.tabId === id && watch.url !== change.url) { clearTabDownloads(id); break; }
   if (approved.has(id) && change.url && origin(change.url) !== approved.get(id)) {

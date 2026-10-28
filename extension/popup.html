@@ -5,6 +5,12 @@
   <h1>MCP Browser Bridge</h1>
   <p id="status" role="status">Loading…</p>
   <button id="reconnect">Reconnect native host</button>
+  <h2>Tabs that need you</h2>
+  <p id="attention-empty">No tab is waiting for you.</p>
+  <ul id="attention"></ul>
+  <p>An MCP client flags a tab when it needs you (CAPTCHA, login, a decision). The tab title starts with a red marker until you press Done or the client clears it.</p>
+  <button id="notifications">Enable desktop notifications…</button>
+  <button id="notifications-off">Disable desktop notifications</button>
   <h2>Google account selection (optional)</h2>
   <label><input id="google-account-selection" type="checkbox"> Allow the MCP client to select an existing Google account</label>
   <p>Off by default. On approved accounts.google.com tabs, exposes account chooser rows for a single requested click. Selecting an account can sign you into a website. Enable only when you want the client to do this; turn it off here at any time. Passwords, verification codes and CAPTCHA still require you.</p>

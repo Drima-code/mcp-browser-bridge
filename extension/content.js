@@ -403,13 +403,40 @@
       throw new Error("Unsupported operation");
     };
   }
+  // Visible tab-strip marker for a flagged tab. Keeps the prefix when the site
+  // rewrites its own title; removing it restores the site's current title.
+  const titleMarker = {prefix:"", observer:null};
+  function applyTitleMarker() {
+    if (titleMarker.prefix && !document.title.startsWith(titleMarker.prefix))
+      document.title = titleMarker.prefix + document.title;
+  }
+  function markAttention(reason) {
+    unmarkAttention();
+    const text = String(reason || "").replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0,80);
+    titleMarker.prefix = `\u{1F534} ${text} \u2013 `;
+    applyTitleMarker();
+    titleMarker.observer = new MutationObserver(applyTitleMarker);
+    titleMarker.observer.observe(document.head || document.documentElement, {subtree:true, childList:true, characterData:true});
+    return {marked:true};
+  }
+  function unmarkAttention() {
+    titleMarker.observer?.disconnect();
+    if (titleMarker.prefix && document.title.startsWith(titleMarker.prefix))
+      document.title = document.title.slice(titleMarker.prefix.length);
+    titleMarker.prefix = ""; titleMarker.observer = null;
+    return {marked:false};
+  }
   // Explicit same-origin descent only. The top tab's grant never authorizes a
   // cross-origin embedded site. Cache by Document so reload invalidates staged state.
   browser.runtime.onMessage.addListener(request => {
     if (!request.drima) return;
     if (request.expected_url && location.href !== request.expected_url)
       throw new Error("Tab navigated; inspect before retrying");
-    if (request.op === "content_status") return Promise.resolve({content_version:"0.2.8"});
+    if (request.op === "content_status") return Promise.resolve({content_version:"0.2.9"});
+    if (request.op === "attention_mark" || request.op === "attention_unmark") {
+      if (window !== window.top) return;
+      return Promise.resolve(request.op === "attention_mark" ? markAttention(request.reason) : unmarkAttention());
+    }
     const path = request.frame_path || [];
     if (!Array.isArray(path) || path.length > 8 || path.some(s => typeof s !== "string"))
       throw new Error("Invalid frame_path (maximum 8 observed selectors)");

@@ -269,7 +269,7 @@ async def test_google_account_popup_setting_and_failed_save():
         page = await browser.new_page()
         await page.set_content((extension / 'popup.html').read_text())
         await page.evaluate('''() => {
-          window.state={mode:'manual',eligible:true,googleAccountSelection:false};
+          window.state={mode:'manual',eligible:true,googleAccountSelection:false,attention:[]};
           window.changes=[];window.rejectSave=false;
           window.browser={runtime:{sendMessage:async r=>{
             if(r.ui==='google-account-selection') {
@@ -383,4 +383,20 @@ async def test_custom_dropdown_leaf_options_are_discoverable_and_clickable():
         for option in options[1:]:
             await page.evaluate("s=>handler({drima:true,op:'act',action:'click',selector:s})", option['selector'])
         assert await page.evaluate('[window.picked, window.country]') == ['CV Espanol', 'Chile']
+        await browser.close()
+
+
+async def test_attention_title_marker_survives_site_title_changes():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content('<title>Apply</title><p>form</p>')
+        await install(page)
+        await page.evaluate("handler({drima:true,op:'attention_mark',reason:'CAPTCHA'})")
+        assert await page.title() == '\U0001F534 CAPTCHA – Apply'
+        await page.evaluate("document.title='Step 2'")
+        await page.wait_for_function("document.title.startsWith('\\u{1F534}')")
+        assert await page.title() == '\U0001F534 CAPTCHA – Step 2'
+        await page.evaluate("handler({drima:true,op:'attention_unmark'})")
+        assert await page.title() == 'Step 2'
         await browser.close()
