@@ -1,3 +1,10 @@
+# Profile detection without --profile — 2026-10-28
+
+Firefox started as the default profile (no --profile) left the host unable to
+route. firefox_profile() now falls back to the profile folder (beside prefs.js)
+whose files the parent Firefox holds open. Live check: detects the Work profile
+`Tez9hEU9.Profile 4`. Host-only change. Verified: 50 tests, ruff.
+
 # Version 0.3.1 — 2026-10-28
 
 David had already uploaded 0.3.0 to AMO, so the screenshot build ships as 0.3.1

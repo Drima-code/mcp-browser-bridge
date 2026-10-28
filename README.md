@@ -307,8 +307,9 @@ Give the MCP server the same variable (for example an `env` entry in the client'
 MCP configuration). Install the addon in each profile that should be reachable.
 
 Profiles opened from Firefox's profile switcher do not get that variable. For
-those, the host reads the profile directory Firefox was started with and looks it
-up in `~/.local/share/drima-browser/profile-routes.json`, which maps a profile
+those, the host reads the profile directory Firefox was started with (its
+`--profile` argument, or else the profile folder whose files Firefox holds open)
+and looks it up in `~/.local/share/drima-browser/profile-routes.json`, which maps a profile
 directory name to a subdirectory:
 
 ```json

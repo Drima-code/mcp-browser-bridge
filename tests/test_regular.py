@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -103,6 +104,22 @@ def test_host_routes_each_firefox_profile_to_its_own_directory(tmp_path, monkeyp
         process.kill()
         process.wait()
     assert firefox_profile(os.getpid()) is None
+    # Without --profile, the profile comes from files the browser holds open.
+    profile = tmp_path / "Ab12.Profile 4"
+    profile.mkdir()
+    (profile / "prefs.js").write_text("")
+    (profile / "cookies.sqlite").write_text("")
+    holder = subprocess.Popen([sys.executable, "-c",
+        f"import time; f=open({str(profile / 'cookies.sqlite')!r}); time.sleep(5)"])
+    try:
+        for _ in range(100):
+            if firefox_profile(holder.pid):
+                break
+            time.sleep(0.02)
+        assert firefox_profile(holder.pid) == "Ab12.Profile 4"
+    finally:
+        holder.kill()
+        holder.wait()
 
 
 async def test_real_native_host_roundtrip(tmp_path, monkeypatch):

@@ -37,7 +37,21 @@ def firefox_profile(pid=None):
     for flag, value in zip(args, args[1:]):
         if flag in (b"--profile", b"-profile") and value:
             return Path(os.fsdecode(value)).name
-    return None
+    # Started without --profile (default profile, -P name, profile switcher): the
+    # profile is the directory whose prefs.js sits beside files Firefox holds open.
+    counts = {}
+    try:
+        fds = list(Path(f"/proc/{pid or os.getppid()}/fd").iterdir())
+    except OSError:
+        return None
+    for fd in fds:
+        try:
+            directory = Path(os.readlink(fd)).parent
+        except OSError:
+            continue
+        if (directory / "prefs.js").is_file():
+            counts[directory.name] = counts.get(directory.name, 0) + 1
+    return max(counts, key=counts.get) if counts else None
 
 
 def host_socket_path(profile=None) -> Path:
