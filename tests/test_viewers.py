@@ -459,3 +459,77 @@ async def test_type_filters_and_press_picks_option_without_native_submit():
             with pytest.raises(Exception):
                 await page.evaluate(act, bad)
         await browser.close()
+
+
+XRAY_SHIM = """() => {
+  window.wrappedJSObject = window;
+  window.exportFunction = (fn, target, options) => { target[options.defineAs] = fn; return fn; };
+  window.routed = [];
+  browser.runtime.sendMessage = async m => { routed.push(m); return {tab_id: String(40 + routed.length)}; };
+}"""
+
+
+async def stage_upload(page, selector, picker=True):
+    meta = {"name": "cv.pdf", "size": 3, "type": "application/pdf", "last_modified": 1}
+    begin = await page.evaluate("r=>handler({drima:true,op:'upload_begin',...r})",
+                                {"selector": selector, "files": [meta], "picker": picker})
+    await page.evaluate("r=>handler({drima:true,op:'upload_chunk',...r})",
+                        {"upload_id": begin["upload_id"], "file_index": 0, "offset": 0, "data": "QUJD"})
+    return page.evaluate("r=>handler({drima:true,op:'upload_commit',...r})", {"upload_id": begin["upload_id"]})
+
+
+async def test_picker_upload_fills_the_input_the_site_asks_to_open():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(
+            '<button id="up">Upload resume</button><button id="pick">Choose</button>'
+            '<label><input type="file" id="hidden" accept=".pdf" style="display:none"></label>'
+            '<button id="hid">Attach</button><button id="noop">Nothing</button>'
+            '<script>window.got=[];'
+            'up.onclick=()=>{const i=document.createElement("input");i.type="file";i.accept=".pdf,.docx";'
+            ' i.onchange=()=>got.push("detached:"+i.files[0].name);i.click();};'
+            'pick.onclick=()=>{const i=document.createElement("input");i.type="file";'
+            ' i.onchange=()=>got.push("picker:"+i.files[0].name);setTimeout(()=>i.showPicker(),100);};'
+            'hidden.onchange=()=>got.push("hidden:"+hidden.files[0].name);hid.onclick=()=>hidden.click();</script>')
+        await install(page)
+        await page.evaluate(XRAY_SHIM)
+        for button in ["#up", "#pick", "#hid"]:
+            result = await (await stage_upload(page, button))
+            assert result["via_picker"] and result["selected"][0]["name"] == "cv.pdf"
+        assert await page.evaluate("got") == ["detached:cv.pdf", "picker:cv.pdf", "hidden:cv.pdf"]
+        # The page's own methods are back once the upload settles.
+        assert await page.evaluate("!Object.hasOwn(HTMLInputElement.prototype,'click')")
+        with pytest.raises(Exception, match="did not ask for a file chooser"):
+            await (await stage_upload(page, "#noop"))
+        assert await page.evaluate("got.length") == 3
+        await browser.close()
+
+
+async def test_new_windows_from_agent_clicks_route_to_the_extension():
+    async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(
+            '<a id="ext" target="_blank" href="https://ats.example/apply?token=secret">Apply on company website</a>'
+            '<button id="pop" onclick="window.opened=window.open(\'https://jobs.example/form\')">Apply</button>'
+            '<a id="tracked" target="_blank" href="https://x.example/" onclick="event.preventDefault();window.own=1">Own</a>'
+            '<button id="plain" onclick="window.plain=1">Next</button>')
+        await install(page)
+        await page.evaluate(XRAY_SHIM)
+        native_open = await page.evaluate("String(window.open)")
+        click = "s=>handler({drima:true,op:'act',action:'click',selector:s})"
+        result = await page.evaluate(click, "#ext")
+        assert result["opened"] == [{"tab_id": "41", "origin": "https://ats.example"}]
+        assert "secret" not in str(result)
+        result = await page.evaluate(click, "#pop")
+        assert result["opened"] == [{"tab_id": "42", "origin": "https://jobs.example"}]
+        assert await page.evaluate("window.opened") is None
+        # Links the page handles itself, and ordinary buttons, route nothing.
+        for selector in ["#tracked", "#plain"]:
+            assert "opened" not in await page.evaluate(click, selector)
+        assert await page.evaluate("[window.own, window.plain]") == [1, 1]
+        assert await page.evaluate("routed.map(m=>m.drima_route_open)") == [
+            "https://ats.example/apply?token=secret", "https://jobs.example/form"]
+        assert await page.evaluate("String(window.open)") == native_open
+        await browser.close()

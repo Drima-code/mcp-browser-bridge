@@ -27,6 +27,12 @@ it may already use. It can close those tabs. The page addresses it requests are
 sent to the websites concerned, as with any navigation. In manual mode it cannot
 open pages; navigating an approved tab to another website ends that tab's approval.
 
+When the client clicks something that makes the website open a new window, the
+extension opens that page in the agent window instead (automatic access mode
+only); the client learns the new tab and the website's domain, not the full
+address. For a file upload the client explicitly requests, the extension can hand
+the named files to the file field a website opens from its upload button.
+
 Screenshots are off by default. If you enable them in the popup, Firefox grants
 the extension its "all websites" permission, which its screenshot function
 requires. The connected client can then request an image of the visible area of a

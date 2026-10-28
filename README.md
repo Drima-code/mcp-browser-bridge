@@ -293,6 +293,21 @@ site beyond the title text, and disappear when the tab closes.
   characters key by key, for fields that filter as you type). Synthetic keys reach
   page handlers but never trigger native defaults such as form submission.
 
+## File choosers and new windows (0.3.2)
+
+Firefox opens neither a native file chooser nor a pop-up for a synthetic click.
+
+- `regular_browser_upload(..., via_picker=True)` takes the visible control that
+  opens the site's chooser (LinkedIn "Upload resume" creates its file input only
+  on click). For that one upload, the content script briefly replaces the page's
+  `HTMLInputElement.prototype.click`/`showPicker` via Firefox `exportFunction`,
+  clicks the control once, and attaches the staged files to the file input the
+  site asked to open. Hooks are removed within 2 seconds; no dialog opens.
+- While an agent click settles (~0.4 s), `window.open` and unhandled
+  `target=_blank` link activations with http(s) addresses are handed to the
+  extension, which opens them in the agent window (automatic access mode only).
+  The click result lists `opened: [{tab_id, origin}]`; full URLs are not returned.
+
 ## Several Firefox profiles
 
 Each native host serves one socket at `$DRIMA_REGULAR_BROWSER_DATA/regular-browser.sock`

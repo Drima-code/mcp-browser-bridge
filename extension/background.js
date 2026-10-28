@@ -13,8 +13,8 @@ function eligible(tab) {
 function origin(url) { return new URL(url).origin; }
 function safeUrl(url) { const u = new URL(url); return u.origin + u.pathname; }
 const PROTOCOL_VERSION = 1;
-const CONTENT_VERSION = "0.3.1";
-const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard", "screenshot"];
+const CONTENT_VERSION = "0.3.2";
+const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard", "screenshot", "picker_upload", "popup_routing"];
 // Pages an agent opens go to one window of their own, never the user's windows.
 let agentWindowId = null;
 function webUrl(url) {
@@ -388,6 +388,15 @@ const ready = (async () => {
   await refreshBadge();
 })();
 browser.runtime.onMessage.addListener(async (request, sender) => {
+  // The packaged content script hands over a page the site tried to open during
+  // an agent click. Pages themselves cannot send extension messages.
+  if (request && Object.hasOwn(request, "drima_route_open")) {
+    if (sender.id !== browser.runtime.id || !sender.tab) throw new Error("Only the bridge content script may route new pages.");
+    await ready;
+    const tab = await browser.tabs.get(sender.tab.id);
+    if (!await allowed(tab)) throw new Error("The source tab is not allowed.");
+    return openInAgentWindow(request.drima_route_open);
+  }
   // Only packaged UI changes access settings; never native MCP/page requests.
   if (sender.id !== browser.runtime.id || sender.url !== browser.runtime.getURL("popup.html"))
     throw new Error("Access settings may only be changed in the extension popup.");

@@ -4,6 +4,17 @@
   globalThis.drimaApprovedTabInstalled = true;
   const contexts = new WeakMap();
   const uploads = new Map(); // One bounded staging area across all frame contexts.
+  // Firefox shows page objects to content scripts through Xray wrappers.
+  // exportFunction lets packaged code stand in for one page method for a
+  // bounded moment around an agent action; restore() puts the page back.
+  function pageHook(target, name, replacement) {
+    if (!target || typeof exportFunction !== "function") return () => {}; // Not a Firefox content script.
+    const own = Object.prototype.hasOwnProperty.call(target, name);
+    const original = own ? target[name] : undefined;
+    exportFunction(replacement, target, {defineAs:name});
+    return () => { if (own) target[name] = original; else delete target[name]; };
+  }
+  const settle = ms => new Promise(resolve => window.setTimeout(resolve, ms));
   function createContext(document, window) {
     const location = window.location;
     const documentId = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8,"0")).join("");
@@ -135,10 +146,13 @@
       for (const [id, state] of uploads) if (Date.now() - state.created > 300000) uploads.delete(id);
       if (request.op === "upload_begin") {
         if (uploads.size) throw new Error("Another upload is staged in this tab; abort it or wait for expiry");
-        const element = fileTarget(request.selector);
-        validateFiles(element, request.files);
+        // Picker mode: the target is the visible control that opens the site's
+        // file chooser (often a file input created only when clicked).
+        const element = request.picker === true ? pickerTrigger(request.selector) : fileTarget(request.selector);
+        if (request.picker !== true) validateFiles(element, request.files);
         const id = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8,"0")).join("");
         uploads.set(id, {document, element, selector:request.selector, url:location.href, created:Date.now(),
+          picker:request.picker === true,
           files:request.files.map(meta => ({...meta, chunks:[], received:0}))});
         return {upload_id:id, notice:"Staging only; no files attached yet"};
       }
@@ -150,7 +164,8 @@
       }
       const state = uploads.get(request.upload_id);
       if (!state) throw new Error("Upload expired or document changed; inspect before retrying");
-      if (state.document !== document || state.url !== location.href || !state.element.isConnected || fileTarget(state.selector) !== state.element)
+      if (state.document !== document || state.url !== location.href || !state.element.isConnected ||
+          (state.picker ? pickerTrigger(state.selector) : fileTarget(state.selector)) !== state.element)
         throw new Error("Upload target changed; no attachment attempted");
       if (request.op === "upload_chunk") {
         if (!Number.isInteger(request.file_index) || request.file_index < 0 || request.file_index >= state.files.length)
@@ -167,20 +182,51 @@
         return {received:file.received};
       }
       if (request.op !== "upload_commit") throw new Error("Unsupported upload operation");
-      validateFiles(state.element, state.files);
+      if (!state.picker) validateFiles(state.element, state.files);
       if (state.files.some(f => f.received !== f.size)) throw new Error("Upload incomplete; no attachment attempted");
       const transfer = new DataTransfer();
       for (const file of state.files)
         transfer.items.add(new File(file.chunks, file.name, {type:file.type, lastModified:file.last_modified}));
       // Delete before the only form mutation. A lost reply must not replay it.
       uploads.delete(request.upload_id);
-      state.element.files = transfer.files;
-      const selected = Array.from(state.element.files).map(f => ({name:f.name,size:f.size,type:f.type}));
-      if (selected.length !== state.files.length || selected.some((f,i) => f.name !== state.files[i].name || f.size !== state.files[i].size))
+      if (state.picker) return attachThroughPicker(state, transfer);
+      return attachFiles(state.element, state.files, transfer);
+    }
+    function attachFiles(input, files, transfer) {
+      input.files = transfer.files;
+      const selected = Array.from(input.files).map(f => ({name:f.name,size:f.size,type:f.type}));
+      if (selected.length !== files.length || selected.some((f,i) => f.name !== files[i].name || f.size !== files[i].size))
         throw new Error("File selection failed; inspect before retrying");
-      state.element.dispatchEvent(new Event("input", {bubbles:true,composed:true}));
-      state.element.dispatchEvent(new Event("change", {bubbles:true,composed:true}));
+      input.dispatchEvent(new Event("input", {bubbles:true,composed:true}));
+      input.dispatchEvent(new Event("change", {bubbles:true,composed:true}));
       return {selected, notice:"Files selected once; the site may upload immediately. Inspect page validation and receipt. No automatic retry."};
+    }
+    function pickerTrigger(target) {
+      const elements = query(target).filter(visible);
+      if (elements.length !== 1) throw new Error(`Expected exactly one visible picker control; got ${elements.length}`);
+      const e = elements[0];
+      if (sensitive(e) || disabled(e)) throw new Error("Sensitive or disabled control");
+      return e;
+    }
+    // Synthetic clicks cannot open a native file chooser. For one requested
+    // upload, intercept the site's own request to open one (input.click() or
+    // showPicker() on a file input) and attach the staged files to that input
+    // instead. Only the input the site asked to open is touched.
+    async function attachThroughPicker(state, transfer) {
+      let captured = null;
+      const take = input => { if (!captured && input && String(input.type).toLowerCase() === "file") { captured = input; return true; } return false; };
+      const proto = window.wrappedJSObject?.HTMLInputElement.prototype;
+      const restore = [
+        pageHook(proto, "click", function () { if (!take(this)) HTMLElement.prototype.click.call(this); }),
+        pageHook(proto, "showPicker", function () { if (!take(this)) HTMLInputElement.prototype.showPicker.call(this); })];
+      try {
+        click(state.element);
+        for (let waited = 0; !captured && waited < 2000; waited += 50) await settle(50);
+      } finally { restore.forEach(undo => undo()); }
+      if (!captured) throw new Error("The control did not ask for a file chooser within 2 seconds; nothing attached.");
+      validateFiles(captured, state.files);
+      if (captured.disabled || captured.webkitdirectory) throw new Error("The requested chooser is disabled or a folder picker; nothing attached.");
+      return {...attachFiles(captured, state.files, transfer), via_picker:true};
     }
     window.addEventListener("pagehide", () => uploads.clear());
     function click(e) {
@@ -216,6 +262,38 @@
         ensureTarget();
       }
       e.click(); // Exactly one activation, including labels/checkboxes/submit buttons.
+    }
+    // Pages opened by a synthetic click (window.open, target=_blank links) are
+    // blocked by Firefox. While one agent click settles, hand such http(s)
+    // addresses to the extension, which opens them in the agent window. The
+    // full address goes only to the extension; the client sees the origin.
+    async function clickRoutingNewWindows(e) {
+      const routed = [];
+      const route = url => {
+        let parsed;
+        try { parsed = new URL(String(url ?? ""), location.href); } catch (_) { return; }
+        if (!/^https?:$/.test(parsed.protocol) || routed.length >= 3) return;
+        routed.push(browser.runtime.sendMessage({drima_route_open:parsed.href})
+          .then(r => ({tab_id:r.tab_id, origin:parsed.origin}), error => ({origin:parsed.origin, error:error.message})));
+      };
+      const onClick = event => { // Registered last: runs after the page's own handlers.
+        if (event.defaultPrevented) return;
+        const link = event.target?.closest?.("a[href]");
+        const target = (link?.target || "").toLowerCase();
+        if (link && target && !["_self","_top","_parent"].includes(target) && /^https?:$/.test(link.protocol)) {
+          event.preventDefault(); route(link.href);
+        }
+      };
+      window.addEventListener("click", onClick);
+      const restore = pageHook(window.wrappedJSObject, "open", function (url) { route(url); return null; });
+      try { click(e); }
+      finally { window.removeEventListener("click", onClick); }
+      await settle(400); // Sites often open the new page right after their handler.
+      restore();
+      const opened = await Promise.all(routed);
+      return {ok:true, ...(opened.length ? {opened} : {}),
+        notice:"Action invoked once; inspect receipt before claiming submission. No automatic retry." +
+          (opened.length ? " New pages went to the agent window." : "")};
     }
     function snapshot(maxChars, request = {}) {
       const offset = request.offset ?? 0, limit = request.limit ?? 100;
@@ -335,7 +413,7 @@
             new MouseEvent(type,init));
         }
       }
-      else if (action === "click") { click(e); }
+      else if (action === "click") return clickRoutingNewWindows(e);
       else if (action === "fill") {
         if (e.readOnly) throw new Error("Read-only control; use the visible widget");
         if (e.isContentEditable) {
@@ -491,7 +569,7 @@
     if (!request.drima) return;
     if (request.expected_url && location.href !== request.expected_url)
       throw new Error("Tab navigated; inspect before retrying");
-    if (request.op === "content_status") return Promise.resolve({content_version:"0.3.1"});
+    if (request.op === "content_status") return Promise.resolve({content_version:"0.3.2"});
     if (request.op === "attention_mark" || request.op === "attention_unmark") {
       if (window !== window.top) return;
       return Promise.resolve(request.op === "attention_mark" ? markAttention(request.reason) : unmarkAttention());

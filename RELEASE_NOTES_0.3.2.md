@@ -1,0 +1,5 @@
+Upload buttons that open a file chooser: some sites, such as LinkedIn Easy Apply, have no file field until you click "Upload resume", and Firefox never opens a file chooser for an automated click. For one upload the client explicitly requests, the extension now clicks that button and gives the chosen local files directly to the file field the site asks to open, with no dialog. Only the files named in that request are attached, and the page's own behavior is restored right afterward.
+
+Links that open a new window: when an automated click makes a site open a new window or tab (for example "Apply on company website"), Firefox blocks it as a pop-up. The extension now opens those pages in the agent window instead. The client only learns the new tab and the website's domain, never the full address. This works only in automatic access mode.
+
+Everything else is unchanged from 0.3.1. Existing website approval, password-field filtering, strict single-target matching and single-shot actions remain in place.

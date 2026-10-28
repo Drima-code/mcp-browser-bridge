@@ -1,3 +1,16 @@
+# Picker uploads and new-window routing 0.3.2 — 2026-10-28
+
+LinkedIn live test: Easy Apply "Upload resume" creates its file input only on
+click and Firefox refuses file choosers/pop-ups for synthetic clicks. Content
+script now uses Firefox exportFunction for bounded page hooks: picker uploads
+(upload via_picker: intercept input.click/showPicker on a file input for <=2 s,
+attach staged files) and new-window routing (window.open + unhandled
+target=_blank during a 0.4 s click window -> background drima_route_open ->
+agent window; client gets tab_id + origin only). Capabilities picker_upload,
+popup_routing. Verified: 52 tests, ruff, web-ext lint 0/0/0. Live check pending
+install. Unsigned archive: artifacts/mcp-browser-bridge-0.3.2.zip
+(SHA256 ef337138111142f19bf25d7deeed37c765ce9792ca0fd9468d582d3e096c6e03).
+
 # Profile detection without --profile — 2026-10-28
 
 Firefox started as the default profile (no --profile) left the host unable to
