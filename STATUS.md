@@ -1,3 +1,16 @@
+# Save viewer documents 0.3.3 — 2026-11-04
+
+JSTOR (via the UCN library proxy) opens PDFs in Firefox's viewer, where content
+scripts cannot run, so they could not be saved. New `save` op /
+`regular_browser_save` (capability `save_document`): downloads.download of the
+allowed tab's own current URL once (client URL never used), validated basename
+with document extension, saveAs false, uniquify; waits ≤15 s, then `status` by
+download_id (only ids this op started for that tab). Server negotiates `save`
+without tab content check (viewer refuses executeScript). No new permissions
+(optional `downloads`). Verified: 56 tests, ruff, web-ext lint 0/0/0, real-Firefox
+E2E 37/37 incl. saving a synthetic PDF from the viewer and rejecting `../`.
+Unsigned archive: artifacts/mcp-browser-bridge-0.3.3.zip (SHA256 cae6b0fe031305577ece84ea57585fcc06b626a0a2f46abd5aa234b567b4b21a).
+
 # 0.3.2 edge cases and real-Firefox E2E — 2026-10-28
 
 Added before signing: dialog answering during acts (dismiss default, accept on

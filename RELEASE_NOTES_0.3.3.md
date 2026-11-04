@@ -1,0 +1,3 @@
+Saving PDFs shown in Firefox's viewer: some libraries, such as JSTOR, open articles in Firefox's built-in PDF viewer instead of downloading them. The extension cannot act inside that viewer. The new save action lets the client save the document an approved tab is already showing, once, through Firefox's normal download manager. Only that tab's own current address is used; the client cannot supply a different one. Firefox applies its own session for the site, and cookies are never read or passed to the client. The file goes to your usual downloads folder under a plain document filename such as "Landis 1977.pdf". This uses the same optional download permission you already enable in the popup.
+
+Everything else is unchanged from 0.3.2.

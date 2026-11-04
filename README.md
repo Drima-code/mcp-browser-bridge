@@ -194,6 +194,18 @@ Permission revocation, tab closure, navigation or website access revocation
 invalidates observation. An empty watch means **not observed**, not proof that
 the click failed. `tracking_error` flags a metadata-observation problem.
 
+### Saving a PDF shown in Firefox's viewer (addon 0.3.3+)
+
+Some libraries (for example JSTOR) open articles in Firefox's PDF viewer instead
+of downloading them, and no content script can act there. `regular_browser_save`
+with `tab_id` and `filename` (a basename ending in `.pdf`, `.epub`, `.txt`, `.csv`,
+`.ris`, `.bib`, `.nbib`, `.xml`, `.json` or `.zip`) saves the tab's **own current
+URL** once through Firefox downloads, so the browser's session for that site
+applies. It waits up to `wait_ms` (≤15 s); if the transfer is still in progress,
+call `action: "status"` with the returned `download_id` instead of saving again.
+Requires the same optional `downloads` permission. Verify the saved file's type
+before use: a site may serve an HTML challenge page at a PDF address.
+
 Firefox's [DownloadItem API](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/downloads/DownloadItem)
 does not supply a source-tab ID. Matching uses referrer origin, expected basename
 (including Firefox's numbered filename variants), and start time. Results are

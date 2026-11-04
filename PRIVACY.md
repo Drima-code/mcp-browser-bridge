@@ -87,6 +87,22 @@ referrer query strings and file contents are not transferred by this observer.
 Only already-observed download IDs are refreshed. The bridge never starts, cancels,
 retries, opens or deletes a download through this feature.
 
+## Saving the document a tab shows (0.3.3)
+
+With the same optional `downloads` permission, the MCP client may ask the
+extension to save the document an approved website tab is currently showing,
+for example a PDF open in Firefox's built-in viewer, which website scripts and
+this extension's content script cannot reach. The extension passes that tab's
+own current address to Firefox's download manager once, with a basename chosen
+by the client (letters, digits and a few punctuation marks, ending in a
+document extension such as `.pdf`). The client cannot supply a different
+address. Firefox applies its own session for that site; cookies and headers are
+never read by the extension or sent to the client. The file is saved in your
+normal downloads folder; the client receives its basename, absolute saved path,
+byte counts, MIME type, state and error, plus the address without its query
+string. Status can be read later only for saves this extension started for that
+tab. Nothing is retried, opened, cancelled or deleted.
+
 Watches accept new candidates for five minutes; memory records are discarded on
 restart or after ten minutes when the next operation/event cleans them up. Website
 navigation, tab closure, website-access revocation and download-permission

@@ -14,7 +14,7 @@ npx --yes web-ext lint --source-dir extension --warnings-as-errors
 uv run --frozen python scripts/package_extension.py
 ```
 
-Upload `artifacts/mcp-browser-bridge-0.3.2.zip`. The archive contains only the six
+Upload `artifacts/mcp-browser-bridge-0.3.3.zip`. The archive contains only the six
 extension assets, license and privacy notice. It contains no browser profiles,
 credentials, job applications or native host executable. Source JS is plain,
 readable code with no build/minification step or remote executable code.

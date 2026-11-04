@@ -13,8 +13,8 @@ function eligible(tab) {
 function origin(url) { return new URL(url).origin; }
 function safeUrl(url) { const u = new URL(url); return u.origin + u.pathname; }
 const PROTOCOL_VERSION = 1;
-const CONTENT_VERSION = "0.3.2";
-const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard", "screenshot", "picker_upload", "popup_routing", "dialogs", "scroll", "open_frame", "text_paging", "drop_upload"];
+const CONTENT_VERSION = "0.3.3";
+const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard", "screenshot", "picker_upload", "popup_routing", "dialogs", "scroll", "open_frame", "text_paging", "drop_upload", "save_document"];
 // Pages an agent opens go to one window of their own, never the user's windows.
 let agentWindowId = null;
 function webUrl(url) {
@@ -279,6 +279,49 @@ async function downloadOperation(request, tab) {
     unattributed_events:watch.unattributed.size,overflow:watch.overflow,tracking_error:watch.trackingError,
     notice:"Candidates match origin, filename and time; source-tab identity is not proven. No event does not prove a failed click."};
 }
+// Save the document an allowed tab already shows (e.g. a PDF in Firefox's
+// viewer, which content scripts cannot reach). The URL is always the tab's own
+// current URL, never a client-supplied one; Firefox applies its session itself
+// and the client sees no cookies or headers. One transfer, no retry.
+const savedDownloads = new Map();
+const SAVE_EXTENSIONS = /\.(pdf|epub|txt|csv|ris|bib|nbib|xml|json|zip)$/i;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+function saveRecord(item) {
+  const complete = item.state === "complete";
+  return {download_id:item.id, state:item.state, filename:basename(item.filename).slice(0,255),
+    saved_path:complete && item.exists !== false && item.filename.length <= 2048 ? item.filename : null,
+    bytes_received:item.bytesReceived, total_bytes:item.totalBytes, mime:item.mime || null,
+    error:item.error ? String(item.error).slice(0,256) : null};
+}
+async function settle(id, waitMs) {
+  const deadline = Date.now() + waitMs;
+  let [item] = await browser.downloads.search({id});
+  while (item && item.state === "in_progress" && Date.now() < deadline) {
+    await sleep(250); [item] = await browser.downloads.search({id});
+  }
+  if (!item) throw new Error("Download record vanished; inspect the downloads folder. No retry.");
+  return saveRecord(item);
+}
+async function saveOperation(request, tab) {
+  if (!await browser.permissions.contains({permissions:["downloads"]}))
+    throw new Error("Enable downloads in the addon popup and accept Firefox's permission prompt.");
+  if (request.action === "status") {
+    const id = Number(request.download_id);
+    if (savedDownloads.get(id) !== tab.id) throw new Error("Unknown save for this tab; only saves started by save_document can be inspected.");
+    return {...await settle(id, 0), notice:"Status only; nothing was started or repeated."};
+  }
+  if (request.action !== "save") throw new Error("Save action must be save or status.");
+  const name = request.filename;
+  if (typeof name !== "string" || name.length < 5 || name.length > 120 || !/^[A-Za-z0-9][A-Za-z0-9 ._()-]*$/.test(name) || !SAVE_EXTENSIONS.test(name))
+    throw new Error("Filename must be a 5-120 character basename (letters, digits, space . _ ( ) -) ending in a document extension such as .pdf.");
+  const url = webUrl(tab.url);
+  const id = await browser.downloads.download({url, filename:name, saveAs:false, conflictAction:"uniquify"});
+  savedDownloads.set(id, tab.id);
+  if (savedDownloads.size > 64) savedDownloads.delete(savedDownloads.keys().next().value);
+  const record = await settle(id, Math.min(Math.max(Number(request.wait_ms) || 12000, 0), 15000));
+  return {...record, tab_id:String(tab.id), source:safeUrl(url),
+    notice:"Saved the tab's current document once through Firefox downloads. Verify the file type before use; no retry."};
+}
 async function status(tab) {
   await installDownloadListeners();
   const result = {addon_version:browser.runtime.getManifest().version,protocol_version:PROTOCOL_VERSION,
@@ -347,6 +390,7 @@ async function dispatch(request) {
   if (request.op === "attention") return attentionOperation(request,tab);
   if (request.op === "status") return status(tab);
   if (request.op === "downloads") return downloadOperation(request,tab);
+  if (request.op === "save") return saveOperation(request,tab);
   if (!["snapshot", "wait", "act", "upload_begin", "upload_chunk", "upload_commit", "upload_abort"].includes(request.op)) throw new Error("Unsupported operation");
   await currentContent(tab);
   // Content code is packaged and fixed; requests are data, never executable JS.

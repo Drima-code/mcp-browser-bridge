@@ -97,7 +97,7 @@ async def tab_with(path, timeout=6):
 async def scenario(base, cross, cv):
     status = await bridge("status")
     wanted = {"open", "navigate", "close", "refs", "keyboard", "screenshot", "picker_upload", "popup_routing",
-              "dialogs", "scroll", "open_frame", "text_paging", "drop_upload", "attention"}
+              "dialogs", "scroll", "open_frame", "text_paging", "drop_upload", "attention", "save_document"}
     check("status lists every capability", wanted <= set(status["capabilities"]), str(status["capabilities"]))
     board = await tab_with("/index.html")
     check("user tab visible in automatic mode", board)
@@ -212,6 +212,16 @@ async def scenario(base, cross, cv):
     closed = await bridge("close", tab_id=ats)
     check("close tab", closed.get("closed"))
 
+    # A PDF shown in Firefox's viewer (no content script) is saved through downloads.
+    viewer = (await bridge("open", url=f"{base}/paper.pdf"))["tab_id"]
+    await asyncio.sleep(1.5)
+    saved, err = await attempt("save", tab_id=viewer, action="save", filename="E2E paper.pdf", wait_ms=8000)
+    expected = (ROOT / "tests/e2e_site/paper.pdf").read_bytes()
+    path = Path(saved["saved_path"]) if saved and saved.get("saved_path") else None
+    check("save_document stores the viewer PDF", path and path.read_bytes() == expected, err or json.dumps(saved))
+    _, err = await attempt("save", tab_id=viewer, action="save", filename="../escape.pdf")
+    check("save_document rejects path names", err and "basename" in err, err or "")
+
 
 def main():
     headful = "--headful" in sys.argv
@@ -231,6 +241,9 @@ def main():
     if not headful:
         options.add_argument("-headless")
     options.set_preference("extensions.webextOptionalPermissionPrompts", False)
+    (work / "downloads").mkdir()
+    options.set_preference("browser.download.folderList", 2)
+    options.set_preference("browser.download.dir", str(work / "downloads"))
     options.set_preference("extensions.webextensions.uuids", json.dumps({ADDON_ID: addon_uuid}))
     # --allow-system-access: the chrome context opens the extension popup page.
     driver = webdriver.Firefox(options=options, service=Service(
@@ -249,6 +262,8 @@ def main():
         driver.find_element(By.ID, "all").click()
         time.sleep(1)
         driver.find_element(By.ID, "screenshots").click()
+        time.sleep(1)
+        driver.find_element(By.ID, "downloads").click()
         time.sleep(1)
         status = driver.find_element(By.ID, "status").text
         check("popup: automatic access enabled, host connected", "automatic" in status and "connected" in status, status)

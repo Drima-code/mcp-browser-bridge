@@ -100,7 +100,7 @@ async def checked_request(payload, required=()):
     feature = {"snapshot": "snapshot_paging", "downloads": "download_watch",
                "focus": "focus", "wait": "wait", "upload_begin": "upload",
                "close": "close", "open": "open", "navigate": "navigate",
-               "screenshot": "screenshot"}.get(payload.get("op"))
+               "screenshot": "screenshot", "save": "save_document"}.get(payload.get("op"))
     if payload.get("op") == "act":
         feature = "hover" if payload.get("action") == "hover" else "act"
         if payload.get("action") in ("press", "type"):
@@ -122,7 +122,8 @@ async def checked_request(payload, required=()):
     if any(" >>> " in s for s in [payload.get("selector") or "", payload.get("scope") or "",
                                  *(payload.get("frame_path") or [])]):
         features.add("shadow_dom")
-    await compatibility(payload.get("tab_id"), features)
+    # Saving needs no content script, and Firefox's PDF viewer refuses one.
+    await compatibility(None if payload.get("op") == "save" else payload.get("tab_id"), features)
     return await request(payload)
 
 
@@ -406,6 +407,29 @@ def create_regular_server():
             {"op": "downloads", "tab_id": tab_id, "action": action,
              "expected_filename": expected_filename, "watch_id": watch_id},
             ("download_watch",),
+        )
+
+    @server.tool()
+    async def regular_browser_save(
+        tab_id: str,
+        action: Literal["save", "status"] = "save",
+        filename: Annotated[str, Field(max_length=120)] = "",
+        download_id: int | None = None,
+        wait_ms: Annotated[int, Field(ge=0, le=15000)] = 12000,
+    ):
+        """Save the document an allowed tab is showing (e.g. a PDF in Firefox's viewer). Addon 0.3.3+.
+
+        Uses the tab's own current URL through Firefox downloads, so the browser's
+        session applies; no cookies or headers reach the client. filename is a
+        basename ending in .pdf/.epub/.txt/.csv/.ris/.bib/.nbib/.xml/.json/.zip.
+        Waits up to wait_ms; if still in_progress, call action="status" with the
+        returned download_id (never save again). Needs the downloads permission.
+        Single transfer, no retry; verify the saved file type before use.
+        """
+        return await checked_request(
+            {"op": "save", "tab_id": tab_id, "action": action, "filename": filename,
+             "download_id": download_id, "wait_ms": wait_ms},
+            ("save_document",),
         )
 
     @server.tool()

@@ -134,7 +134,7 @@ def main():
             approved.set(tab.id,origin(base));
             const context={tab_id:String(tab.id)};
             const status=await dispatch({op:'status',...context});
-            if(status.addon_version!=='0.3.2' || status.content_version!=='0.3.2' || status.protocol_version!==1)
+            if(status.addon_version!=='0.3.3' || status.content_version!=='0.3.3' || status.protocol_version!==1)
               throw new Error('Protocol/content handshake failed');
             await dispatch({op:'focus',...context});
             if(!(await browser.tabs.get(tab.id)).active)throw new Error('Focus failed');
