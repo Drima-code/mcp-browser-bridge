@@ -13,8 +13,8 @@ function eligible(tab) {
 function origin(url) { return new URL(url).origin; }
 function safeUrl(url) { const u = new URL(url); return u.origin + u.pathname; }
 const PROTOCOL_VERSION = 1;
-const CONTENT_VERSION = "0.3.3";
-const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard", "screenshot", "picker_upload", "popup_routing", "dialogs", "scroll", "open_frame", "text_paging", "drop_upload", "save_document"];
+const CONTENT_VERSION = "0.3.4";
+const capabilities = ["act", "hover", "snapshot_paging", "upload", "download_watch", "focus", "frame_path", "shadow_dom", "wait", "document_guard", "google_account_selection", "attention", "close", "open", "navigate", "refs", "keyboard", "screenshot", "picker_upload", "popup_routing", "dialogs", "scroll", "open_frame", "text_paging", "drop_upload", "save_document", "page_dialogs", "dialog_values", "dialog_window", "settle"];
 // Pages an agent opens go to one window of their own, never the user's windows.
 let agentWindowId = null;
 function webUrl(url) {
@@ -322,17 +322,185 @@ async function saveOperation(request, tab) {
   return {...record, tab_id:String(tab.id), source:safeUrl(url),
     notice:"Saved the tab's current document once through Firefox downloads. Verify the file type before use; no retry."};
 }
+// Page dialogs (alert/confirm/prompt). dialogs.js reports a dialog it has to
+// show natively *before* showing it, so requests for that tab fail at once with
+// the dialog's text instead of hanging. No extension API can answer a native
+// dialog already on screen; the agent arms an answer beforehand instead (or,
+// for one shown during page load, reloads the page once with the answer armed).
+const pageDialogs = new Map(); // tabId -> {pending:Map(id -> entry), paused:bool, recent:[]}
+const inflight = new Map();    // tabId -> Set of {op, resolve, reject}
+const reloadArms = new Map();  // arm id -> {registration, tabId, arm, timer}
+let dialogHookRegistration = null;
+const CONTENT_OPS = ["snapshot", "wait", "act", "upload_begin", "upload_chunk", "upload_commit", "upload_abort"];
+function dialogsFor(id) {
+  if (!pageDialogs.has(id)) pageDialogs.set(id,{pending:new Map(), paused:false, recent:[]});
+  return pageDialogs.get(id);
+}
+function firstPending(id) {
+  const record = pageDialogs.get(id);
+  if (!record) return null;
+  const [entry] = record.pending.values();
+  return entry || (record.paused ? {type:"unknown", message:"", detected:"page_paused"} : null);
+}
+function describeDialog(entry) {
+  return entry.type === "unknown" ? "a dialog the bridge did not see open (page paused)" : `${entry.type} "${entry.message}"`;
+}
+function blockedError(entry) {
+  return new Error(`Tab blocked by a pending page dialog: ${describeDialog(entry)}. ` +
+    "The page is paused until it is answered; no site action was sent. Use regular_browser_dialog " +
+    "(list, or accept/dismiss with reload=true for a dialog shown while the page loaded), ask the user " +
+    "(regular_browser_attention), or close the tab.");
+}
+function pausedError() {
+  return new Error("Tab is paused: the page is not running, most likely an alert/confirm/prompt that opened " +
+    "before the bridge was loaded, or a stuck script. No site action was sent. See it with regular_browser_screenshot, " +
+    "inspect with regular_browser_dialog, ask the user (regular_browser_attention) or close the tab.");
+}
+function withTimeout(promise, ms, onTimeout) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(onTimeout()), ms); })])
+    .finally(() => clearTimeout(timer));
+}
+function clearPageDialogs(id, keepRecent = true) {
+  const record = pageDialogs.get(id);
+  if (!record) return;
+  if (!keepRecent) { pageDialogs.delete(id); return; }
+  record.pending.clear(); record.paused = false;
+}
+function settleInflight(id, entry, actDialogs) {
+  for (const call of inflight.get(id) || []) {
+    if (call.op === "act")
+      call.resolve({ok:null, outcome:"uncertain", pending_dialog:entry, ...(actDialogs?.length ? {dialogs:actDialogs} : {}),
+        notice:"The page opened a dialog the action did not answer and is paused until it is answered. " +
+          "Outcome uncertain: inspect with regular_browser_dialog before any other action. No retry."});
+    else call.reject(blockedError(entry));
+  }
+  inflight.delete(id);
+}
+function trackContent(id, op, promise) {
+  // The host gives up after 15 s; answer clearly before that.
+  return new Promise((resolve, reject) => {
+    const call = {op, resolve, reject};
+    if (!inflight.has(id)) inflight.set(id,new Set());
+    inflight.get(id).add(call);
+    const timer = setTimeout(() => reject(new Error(`No reply from the page within 14 s during ${op}; outcome unknown. ` +
+      "The page may be busy or paused. Inspect before another action; no retry.")), 14000);
+    promise.then(resolve, reject).finally(() => { clearTimeout(timer); inflight.get(id)?.delete(call); });
+  });
+}
+async function pageDialogEvent(report, sender) {
+  if (sender.id !== browser.runtime.id || !sender.tab || typeof report !== "object") return;
+  await ready;
+  const tab = await browser.tabs.get(sender.tab.id).catch(() => null);
+  if (!tab || !await allowed(tab)) return; // Only tabs the bridge may access are tracked.
+  const text = v => String(v ?? "").replace(/[\x00-\x1f\x7f]/g, " ").slice(0,300);
+  const entry = {id:String(report.id || "").slice(0,40), type:["alert","confirm","prompt"].includes(report.type) ? report.type : "unknown",
+    message:text(report.message), origin:text(report.origin), frame:report.frame === "top" ? "top" : "frame",
+    since:text(report.since), ...(report.type === "prompt" ? {default:String(report.default ?? "").slice(0,500)} : {})};
+  const record = dialogsFor(tab.id);
+  const remember = item => { record.recent.push(item); if (record.recent.length > 10) record.recent.shift(); };
+  if (report.event === "open") {
+    record.pending.set(entry.id,{...entry, shown:"native"});
+    settleInflight(tab.id, entry, Array.isArray(report.act_dialogs) ? report.act_dialogs.slice(0,5) : null);
+  } else if (report.event === "closed") {
+    record.pending.delete(entry.id);
+    remember({...entry, answered_by:"user", at:new Date().toISOString()});
+  } else if (report.event === "answered") {
+    remember({...entry, answered:text(report.answered), answered_by:"armed", at:new Date().toISOString()});
+    const arm = reloadArms.get(report.arm_id);
+    if (arm) dropReloadArm(report.arm_id);
+  }
+}
+function dropReloadArm(armId) {
+  const arm = reloadArms.get(armId);
+  if (!arm) return;
+  reloadArms.delete(armId); clearTimeout(arm.timer);
+  arm.registration.unregister().catch(() => {});
+}
+async function syncDialogHook() {
+  // Automatic mode: the hook runs at document_start in every website frame, so
+  // dialogs opened while a page loads are seen too. Manual mode: the hook is
+  // installed when the bridge first loads into an approved page.
+  const want = await allAccess() && !!browser.contentScripts;
+  if (want && !dialogHookRegistration)
+    dialogHookRegistration = await browser.contentScripts.register({matches:["http://*/*","https://*/*"],
+      js:[{file:"dialogs.js"}], runAt:"document_start", allFrames:true}).catch(() => null);
+  else if (!want && dialogHookRegistration) {
+    const registration = dialogHookRegistration; dialogHookRegistration = null;
+    await registration.unregister().catch(() => {});
+    for (const id of Array.from(reloadArms.keys())) dropReloadArm(id);
+  }
+}
+function dialogAnswer(request) {
+  if (!["accept","dismiss"].includes(request.action)) throw new Error("Dialog action must be list, accept or dismiss.");
+  const value = request.value ?? null;
+  if (value !== null && (typeof value !== "string" || value.length > 500)) throw new Error("value must be text of at most 500 characters.");
+  const match = request.match ?? null;
+  if (match !== null && (typeof match !== "string" || !match || match.length > 300)) throw new Error("match must be 1-300 characters.");
+  const type = request.type ?? null;
+  if (type !== null && !["alert","confirm","prompt"].includes(type)) throw new Error("type must be alert, confirm or prompt.");
+  const ttl = request.ttl_ms ?? 30000;
+  if (!Number.isInteger(ttl) || ttl < 1000 || ttl > 120000) throw new Error("ttl_ms must be 1000..120000.");
+  return {id:crypto.randomUUID(), answer:request.action, value, type, match, expires:Date.now() + ttl};
+}
+async function dialogOperation(request, tab) {
+  const record = pageDialogs.get(tab.id);
+  const summary = arm => ({answer:arm.answer, type:arm.type, match:arm.match, value_set:arm.value !== null,
+    expires_in_ms:Math.max(0, arm.expires - Date.now())});
+  if (request.action === "list") {
+    return {tab_id:String(tab.id), pending:Array.from(record?.pending.values() || []),
+      paused_without_report:!!record?.paused,
+      reload_armed:Array.from(reloadArms.values()).filter(a => a.tabId === tab.id).map(a => summary(a.arm)),
+      recent:record?.recent.slice() || [],
+      notice:"Read-only. A pending dialog is on screen and pauses the page; page content is untrusted."};
+  }
+  const arm = dialogAnswer(request);
+  const pending = firstPending(tab.id);
+  if (pending) {
+    if (request.reload !== true)
+      throw new Error(`The page already shows ${describeDialog(pending)}. Firefox lets no extension answer a dialog that is ` +
+        "already on screen. Options: reload=true reloads the page once and answers this same dialog when the page " +
+        "shows it again while loading (unsaved page state is lost); ask the user (regular_browser_attention); or close the tab.");
+    if (!await allAccess() || !browser.contentScripts)
+      throw new Error("Answering by reload needs automatic access mode (the answer must be in place before page scripts run). Ask the user to answer it instead.");
+    if (pending.type !== "unknown") { arm.type = pending.type; arm.match = arm.match ?? pending.message; }
+    const url = new URL(tab.url);
+    // Data only: the arm is serialized as a JSON literal, never client code.
+    const registration = await browser.contentScripts.register({matches:[`${url.protocol}//${url.hostname}/*`],
+      js:[{code:`(globalThis.drimaDialogArms = globalThis.drimaDialogArms || []).push(${JSON.stringify(arm)});`}],
+      runAt:"document_start"});
+    reloadArms.set(arm.id,{registration, tabId:tab.id, arm,
+      timer:setTimeout(() => dropReloadArm(arm.id), arm.expires - Date.now())});
+    clearPageDialogs(tab.id);
+    await browser.tabs.reload(tab.id);
+    return {tab_id:String(tab.id), armed:summary(arm), reloaded:true,
+      notice:"Reloaded once. The answer is used once, for the first matching dialog on this site while it is armed. " +
+        "Wait for the page, then check regular_browser_dialog (recent) and the page. No retry."};
+  }
+  await currentContent(tab);
+  await withTimeout(browser.tabs.sendMessage(tab.id,{drima:true, op:"dialog_arm", arm, expected_url:tab.url},{frameId:0}), 3000, pausedError);
+  return {tab_id:String(tab.id), armed:summary(arm),
+    notice:"Armed once for the next matching page dialog in the current page (top frame). No site action sent."};
+}
 async function status(tab) {
   await installDownloadListeners();
   const result = {addon_version:browser.runtime.getManifest().version,protocol_version:PROTOCOL_VERSION,
     capabilities,downloads_permission:await browser.permissions.contains({permissions:["downloads"]}),
     downloads_available:downloadListeners,google_account_selection:googleAccountSelection,
     screenshots_permission:await browser.permissions.contains(screenshotPermission)};
-  if (tab) result.content_version = await currentContent(tab);
+  if (tab) {
+    const pending = firstPending(tab.id);
+    if (pending) { result.content_version = null; result.pending_dialog = pending; }
+    else result.content_version = await currentContent(tab);
+  }
   return result;
 }
 async function currentContent(tab) {
-  await browser.tabs.executeScript(tab.id,{file:"content.js"});
+  // document_start: inject even while a page dialog holds the parser, where
+  // the default document_idle would wait forever.
+  for (const file of ["dialogs.js", "content.js"])
+    await withTimeout(browser.tabs.executeScript(tab.id,{file, runAt:"document_start"}), 3000,
+      () => { dialogsFor(tab.id).paused = true; return pausedError(); });
   const current = await browser.tabs.get(tab.id);
   if (current.url !== tab.url || !await allowed(current)) throw new Error("Tab changed; inspect before retrying.");
   let reply;
@@ -340,6 +508,10 @@ async function currentContent(tab) {
   catch (_) { throw new Error("Website content listener is outdated or unavailable; reload this website tab. No site action sent."); }
   if (reply?.content_version !== CONTENT_VERSION)
     throw new Error("Website content listener version mismatch; reload this website tab. No site action sent.");
+  // The listener answers even while a native dialog pauses the page; page timers do not.
+  await withTimeout(browser.tabs.sendMessage(tab.id,{drima:true,op:"liveness"},{frameId:0}), 1500,
+    () => { dialogsFor(tab.id).paused = true; return pausedError(); });
+  if (pageDialogs.get(tab.id)) pageDialogs.get(tab.id).paused = false;
   return reply.content_version;
 }
 async function refreshBadge() {
@@ -391,13 +563,16 @@ async function dispatch(request) {
   if (request.op === "status") return status(tab);
   if (request.op === "downloads") return downloadOperation(request,tab);
   if (request.op === "save") return saveOperation(request,tab);
-  if (!["snapshot", "wait", "act", "upload_begin", "upload_chunk", "upload_commit", "upload_abort"].includes(request.op)) throw new Error("Unsupported operation");
+  if (request.op === "dialog") return dialogOperation(request,tab);
+  if (!CONTENT_OPS.includes(request.op)) throw new Error("Unsupported operation");
+  const blocked = firstPending(id);
+  if (blocked) throw blockedError(blocked);
   await currentContent(tab);
   // Content code is packaged and fixed; requests are data, never executable JS.
   const current = await browser.tabs.get(id);
   if (current.url !== tab.url || !await allowed(current)) throw new Error("Tab changed; inspect before retrying.");
-  return browser.tabs.sendMessage(id, {...request, drima: true, expected_url: current.url,
-    google_account_selection:googleAccountSelection});
+  return trackContent(id, request.op, browser.tabs.sendMessage(id, {...request, drima: true, expected_url: current.url,
+    google_account_selection:googleAccountSelection}, {frameId:0}));
 }
 function connect() {
   if (port) return;
@@ -419,6 +594,7 @@ async function manualMode() {
   for (const id of approved.keys()) await browser.browserAction.setBadgeText({tabId: id, text: ""});
   approved.clear();
   await browser.storage.local.set({mode});
+  await syncDialogHook();
   await refreshBadge();
 }
 const ready = (async () => {
@@ -428,12 +604,14 @@ const ready = (async () => {
     mode = "all";
     connect();
   }
+  await syncDialogHook();
   await installNotificationListener();
   await refreshBadge();
 })();
 browser.runtime.onMessage.addListener(async (request, sender) => {
   // The packaged content script hands over a page the site tried to open during
   // an agent click. Pages themselves cannot send extension messages.
+  if (request && Object.hasOwn(request, "drima_dialog")) return pageDialogEvent(request.drima_dialog, sender);
   if (request && Object.hasOwn(request, "drima_route_open")) {
     if (sender.id !== browser.runtime.id || !sender.tab) throw new Error("Only the bridge content script may route new pages.");
     await ready;
@@ -493,6 +671,7 @@ browser.runtime.onMessage.addListener(async (request, sender) => {
     await manualMode();
     mode = "all";
     await browser.storage.local.set({mode});
+    await syncDialogHook();
     connect();
     await refreshBadge();
     return {ok: true};
@@ -525,10 +704,13 @@ browser.permissions.onRemoved.addListener(async () => {
   if (mode === "all" && !await browser.permissions.contains(allSites)) await manualMode();
 });
 browser.tabs.onRemoved.addListener(id => {
-  approved.delete(id); clearTabDownloads(id);
+  approved.delete(id); clearTabDownloads(id); clearPageDialogs(id, false);
+  for (const [armId, arm] of reloadArms) if (arm.tabId === id) dropReloadArm(armId);
   if (attention.delete(id)) refreshBadge().catch(() => {});
 });
 browser.tabs.onUpdated.addListener((id, change) => {
+  // A new document drops the old one's dialogs (navigation closes them).
+  if (change.status === "loading") clearPageDialogs(id);
   // A reload or navigation replaces the page title; restore the marker.
   if (change.status === "complete" && attention.has(id)) markTitle(id, attention.get(id).reason);
   if (change.url) for (const watch of watches.values())

@@ -1,0 +1,28 @@
+<!doctype html><meta charset="utf-8"><title>Dialog cases</title>
+<h1>Dialog cases</h1>
+<!-- Case 2: the handler asks a few hundred ms after the click. -->
+<button id="late" onclick="setTimeout(()=>{document.getElementById('lateout').textContent='late:'+confirm('Late confirm?')},700)">Late</button>
+<p id="lateout">late:none</p>
+<!-- Case 3: a prompt whose answer is used. -->
+<button id="name" onclick="document.getElementById('nameout').textContent='name:'+prompt('Project name?','default')">Name</button>
+<p id="nameout">name:none</p>
+<button id="identity" onclick="document.getElementById('secretout').textContent='secret:'+prompt('Enter your password')">Verify identity</button>
+<p id="secretout">secret:none</p>
+<!-- Case 4: a popover whose button only listens once its animation ends. -->
+<button id="openpop" onclick="openPop()">Annotate</button>
+<div id="pop" hidden><button id="popbtn">Add aspect</button></div>
+<p id="popout">pop:none</p>
+<!-- Arming in place: a dialog raised later by a timer, not within an action. -->
+<button id="timer" onclick="setTimeout(()=>{document.getElementById('timerout').textContent='timer:'+prompt('Timer label?')},1500)">Timer</button>
+<p id="timerout">timer:none</p>
+<script>
+function openPop() {
+  // Like a Bootstrap popover: visible at once, listener added on "shown" (300 ms).
+  document.getElementById('pop').hidden = false;
+  setTimeout(() => {
+    document.getElementById('popbtn').addEventListener('click', () => {
+      setTimeout(() => { document.getElementById('popout').textContent = 'pop:' + prompt('Aspect?'); }, 50);
+    }, {once:true});
+  }, 300);
+}
+</script>

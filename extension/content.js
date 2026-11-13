@@ -287,16 +287,34 @@
     const signIn = url => /^(accounts\.google\.com|login\.microsoftonline\.com|login\.live\.com|appleid\.apple\.com)$/.test(url.hostname) ||
       (url.hostname === "github.com" && url.pathname.startsWith("/login")) ||
       (/(^|\.)linkedin\.com$/.test(url.hostname) && url.pathname.startsWith("/oauth"));
+    // Dialogs the action raises within its window get the requested answer
+    // (dialog, dialog_value for prompt), at most MAX_ACT_DIALOGS per action; the
+    // persistent hook in dialogs.js applies it and shows any further one natively.
+    const MAX_ACT_DIALOGS = 5;
+    const boundedMs = (value, max, name, fallback) => {
+      if (value == null) return fallback;
+      if (!Number.isInteger(value) || value < 0 || value > max) throw new Error(`${name} must be 0..${max} ms`);
+      return value;
+    };
     async function guardedAction(request, run) {
-      const routed = [], dialogs = [], accept = request.dialog === "accept";
+      // Shared with dialogs.js, which the extension injects first (it applies the answers).
+      const dialogState = globalThis.drimaDialogs || (globalThis.drimaDialogs = {act:null, armed:[], hooked:new WeakSet()});
+      const accept = request.dialog === "accept";
+      if (request.dialog_value != null && (typeof request.dialog_value !== "string" || request.dialog_value.length > 500))
+        throw new Error("dialog_value must be text of at most 500 characters");
+      const settleMs = boundedMs(request.settle_ms, 2000, "settle_ms", 0);
+      const windowMs = boundedMs(request.dialog_window_ms, 3000, "dialog_window_ms",
+        ["click", "press", "check", "uncheck", "select"].includes(request.action) ? 400 : 0);
+      if (dialogState.act) throw new Error("Another action is still settling in this page; inspect before acting again.");
+      // Let animations finish and late listeners attach (e.g. a popover's "shown").
+      if (settleMs) await settle(settleMs);
+      const routed = [];
       const parse = url => { try { return new URL(String(url ?? ""), location.href); } catch (_) { return null; } };
       const route = parsed => {
         if (routed.length >= 3) return;
         routed.push(browser.runtime.sendMessage({drima_route_open:parsed.href})
           .then(r => ({tab_id:r.tab_id, origin:parsed.origin}), error => ({origin:parsed.origin, error:error.message})));
       };
-      const record = (type, message) => { if (dialogs.length < 5)
-        dialogs.push({type, message:String(message ?? "").replace(/[\x00-\x1f\x7f]/g, " ").slice(0,300), answered:type === "alert" ? "ok" : accept ? "accept" : "dismiss"}); };
       const onClick = event => { // Registered last: runs after the page's own handlers.
         if (event.defaultPrevented) return;
         const link = event.target?.closest?.("a[href]");
@@ -312,21 +330,24 @@
           const parsed = parse(url);
           if (parsed && /^https?:$/.test(parsed.protocol) && !signIn(parsed)) { route(parsed); return null; }
           return nativeOpen.call(page, url, target, features);
-        }),
-        pageHook(page, "alert", function (message) { record("alert", message); }),
-        pageHook(page, "confirm", function (message) { record("confirm", message); return accept; }),
-        pageHook(page, "prompt", function (message, fallback) { record("prompt", message); return accept ? String(fallback ?? "") : null; })];
+        })];
+      const actDialogs = {answer:accept ? "accept" : "dismiss", value:request.dialog_value ?? null,
+        max:MAX_ACT_DIALOGS, answered:[]};
+      dialogState.act = actDialogs;
       window.addEventListener("click", onClick);
       let result;
       try { result = await run(); }
       finally {
         window.removeEventListener("click", onClick);
         // Sites often open a page or ask for confirmation right after their handler.
-        if (["click", "press", "check", "uncheck", "select"].includes(request.action)) await settle(400);
+        if (windowMs) await settle(windowMs);
         restore.forEach(undo => undo());
+        if (dialogState.act === actDialogs) dialogState.act = null;
       }
       const opened = await Promise.all(routed);
+      const dialogs = actDialogs.answered;
       return {...result, ...(opened.length ? {opened} : {}), ...(dialogs.length ? {dialogs} : {}),
+        ...(dialogs.length >= MAX_ACT_DIALOGS ? {dialogs_limit_reached:true} : {}),
         ...(opened.length ? {notice:result.notice + " New pages went to the agent window."} : {})};
     }
     function snapshot(maxChars, request = {}) {
@@ -579,7 +600,15 @@
       if (!Number.isInteger(timeout) || timeout < 0 || timeout > 10000 ||
           !["visible","hidden","attached","detached"].includes(request.state || "visible"))
         throw new Error("Invalid wait state or timeout (0..10000 ms)");
-      const state = request.state || "visible", started = Date.now(), url = location.href;
+      const state = request.state || "visible", url = location.href;
+      // settle_ms: pause first, even if the target already matches (or with no target).
+      const pause = boundedMs(request.settle_ms, 2000, "settle_ms", 0);
+      if (pause) await settle(pause);
+      if (!request.selector) {
+        if (!pause) throw new Error("Provide a selector, or settle_ms for a fixed pause");
+        return {matched:null, paused_ms:pause, document_id:documentId, notice:"Paused only; nothing observed or invoked."};
+      }
+      const started = Date.now();
       while (true) {
         if (location.href !== url || !document.documentElement?.isConnected || window.document !== document)
           throw new Error("Document changed during wait; inspect again");
@@ -634,7 +663,17 @@
     if (!request.drima) return;
     if (request.expected_url && location.href !== request.expected_url)
       throw new Error("Tab navigated; inspect before retrying");
-    if (request.op === "content_status") return Promise.resolve({content_version:"0.3.3"});
+    if (request.op === "content_status") return Promise.resolve({content_version:"0.3.4"});
+    // A page timer only fires while the page runs: a native alert/confirm/prompt
+    // (or a stuck script) suspends it, while this message listener still answers.
+    if (request.op === "liveness") return new Promise(resolve => window.setTimeout(() => resolve({alive:true}), 0));
+    if (request.op === "dialog_arm") {
+      const state = globalThis.drimaDialogs;
+      if (!state) throw new Error("Dialog hook missing; reload this website tab.");
+      state.armed = state.armed.filter(a => a.expires > Date.now()).slice(-4);
+      state.armed.push(request.arm);
+      return Promise.resolve({armed:true});
+    }
     if (request.op === "attention_mark" || request.op === "attention_unmark") {
       if (window !== window.top) return;
       return Promise.resolve(request.op === "attention_mark" ? markAttention(request.reason) : unmarkAttention());

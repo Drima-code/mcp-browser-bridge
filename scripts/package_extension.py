@@ -16,7 +16,7 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output = args.output_dir / f"mcp-browser-bridge-{manifest['version']}.zip"
     assets = {name: extension / name for name in (
-        'manifest.json', 'background.js', 'content.js', 'popup.html', 'popup.js', 'popup.css'
+        'manifest.json', 'background.js', 'content.js', 'dialogs.js', 'popup.html', 'popup.js', 'popup.css'
     )}
     assets.update({name: root / name for name in ('LICENSE', 'PRIVACY.md')})
     with ZipFile(output, 'w', ZIP_DEFLATED) as archive:

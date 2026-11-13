@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import functools
 import json
 import mimetypes
 import os
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from mcp.server.mcpserver import Image, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from mcp_browser_bridge.native_host import MAX_MESSAGE, socket_path
@@ -75,6 +77,9 @@ async def compatibility(tab_id=None, required=()):
     try:
         status = await request(payload)
     except AddonError as exc:
+        if tab_id is not None and "Unsupported operation" not in str(exc):
+            # A tab-specific refusal (paused page, pending dialog, revoked access).
+            raise RuntimeError(f"{exc} No requested action was sent.") from exc
         raise RuntimeError(
             "Cannot negotiate with the installed addon. Install MCP Browser Bridge "
             "0.2.5+, reload the website tab and reconnect the MCP client. "
@@ -95,12 +100,16 @@ async def compatibility(tab_id=None, required=()):
     return {**status, "server_version": version("mcp-browser-bridge"), "server_protocol_version": 1}
 
 
+CONTENT_OPS = {"snapshot", "wait", "act", "upload_begin"}
+
+
 async def checked_request(payload, required=()):
     features = set(required)
     feature = {"snapshot": "snapshot_paging", "downloads": "download_watch",
                "focus": "focus", "wait": "wait", "upload_begin": "upload",
                "close": "close", "open": "open", "navigate": "navigate",
-               "screenshot": "screenshot", "save": "save_document"}.get(payload.get("op"))
+               "screenshot": "screenshot", "save": "save_document",
+               "dialog": "page_dialogs"}.get(payload.get("op"))
     if payload.get("op") == "act":
         feature = "hover" if payload.get("action") == "hover" else "act"
         if payload.get("action") in ("press", "type"):
@@ -109,6 +118,12 @@ async def checked_request(payload, required=()):
             features.add(payload["action"])
         if payload.get("dialog"):
             features.add("dialogs")
+        if payload.get("dialog_value") is not None:
+            features.add("dialog_values")
+        if payload.get("dialog_window_ms") is not None:
+            features.add("dialog_window")
+    if payload.get("settle_ms"):
+        features.add("settle")
     if payload.get("text_offset"):
         features.add("text_paging")
     if str(payload.get("selector") or "").startswith("ref=") or payload.get("compact"):
@@ -122,8 +137,11 @@ async def checked_request(payload, required=()):
     if any(" >>> " in s for s in [payload.get("selector") or "", payload.get("scope") or "",
                                  *(payload.get("frame_path") or [])]):
         features.add("shadow_dom")
-    # Saving needs no content script, and Firefox's PDF viewer refuses one.
-    await compatibility(None if payload.get("op") == "save" else payload.get("tab_id"), features)
+    # Only page operations need the tab's content listener checked. Saving,
+    # closing, screenshots and dialog handling must work on a paused page (and
+    # Firefox's PDF viewer refuses content scripts).
+    page_op = payload.get("op") in CONTENT_OPS
+    await compatibility(payload.get("tab_id") if page_op else None, features)
     return await request(payload)
 
 
@@ -196,6 +214,23 @@ async def upload(tab_id: str, selector: str, paths: list[str], frame_path: list[
             raise
 
 
+def anticipated(tool):
+    """Report bridge failures to the client with their text.
+
+    The MCP SDK forwards only ToolError messages; any other exception reaches
+    the model as a bare "Error executing tool", hiding why (e.g. a page dialog).
+    """
+    @functools.wraps(tool)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await tool(*args, **kwargs)
+        except ToolError:
+            raise
+        except (RuntimeError, ValueError, OSError) as exc:
+            raise ToolError(str(exc) or f"{type(exc).__name__}; outcome unknown, inspect before another action") from exc
+    return wrapper
+
+
 def create_regular_server():
     server = MCPServer(
         "MCP Browser Bridge",
@@ -209,7 +244,10 @@ def create_regular_server():
         ),
     )
 
-    @server.tool()
+    def tool():
+        return lambda function: server.tool()(anticipated(function))
+
+    @tool()
     async def regular_browser_status(tab_id: str | None = None):
         """Report installed addon version, protocol, capabilities and download permission.
 
@@ -218,17 +256,17 @@ def create_regular_server():
         """
         return await compatibility(tab_id)
 
-    @server.tool()
+    @tool()
     async def regular_browser_tabs():
         """List accessible website tabs and the user-selected access mode."""
         return await checked_request({"op": "tabs"})
 
-    @server.tool()
+    @tool()
     async def regular_browser_focus(tab_id: str):
         """Activate one approved Firefox tab and focus its window once. No retry."""
         return await checked_request({"op": "focus", "tab_id": tab_id})
 
-    @server.tool()
+    @tool()
     async def regular_browser_open(url: Annotated[str, Field(max_length=4096)]):
         """Open an http(s) page in the agent's own Firefox window. Addon 0.3.0+.
 
@@ -237,7 +275,7 @@ def create_regular_server():
         """
         return await checked_request({"op": "open", "url": url}, ("open",))
 
-    @server.tool()
+    @tool()
     async def regular_browser_navigate(
         tab_id: str, action: Literal["url", "back", "forward", "reload"] = "url",
         url: Annotated[str, Field(max_length=4096)] = "",
@@ -249,7 +287,7 @@ def create_regular_server():
         return await checked_request({"op": "navigate", "tab_id": tab_id, "action": action, "url": url},
                                      ("navigate",))
 
-    @server.tool()
+    @tool()
     async def regular_browser_screenshot(tab_id: str):
         """Capture the visible area of an allowed tab shown in its window. Addon 0.3.1+.
 
@@ -260,28 +298,35 @@ def create_regular_server():
         meta = {k: v for k, v in result.items() if k != "data"}
         return [Image(data=base64.b64decode(result["data"]), format="jpeg"), json.dumps(meta)]
 
-    @server.tool()
+    @tool()
     async def regular_browser_close(tab_id: str):
         """Close one approved website tab that is no longer needed. Addon 0.3.0+. No retry."""
         return await checked_request({"op": "close", "tab_id": tab_id}, ("close",))
 
-    @server.tool()
+    @tool()
     async def regular_browser_wait(
-        tab_id: str, selector: str,
+        tab_id: str, selector: str = "",
         state: Literal["visible", "hidden", "attached", "detached"] = "visible",
         timeout_ms: Annotated[int, Field(ge=0, le=10000)] = 5000,
         frame_path: list[str] | None = None, document_id: str | None = None,
+        settle_ms: Annotated[int, Field(ge=0, le=2000)] = 0,
     ):
         """Observe one target for up to 10 seconds. Read-only; never repeats an action.
 
         Use observed frame selectors for same-origin descent. Supports open shadow
         selectors separated by ' >>> '. Pass snapshot document_id to reject reloads.
+        Addon 0.3.4: settle_ms (<=2000) pauses first even if the target already
+        matches, e.g. until a popover's animation ends and its listeners attach;
+        with no selector it is a plain pause.
         """
+        if not selector and not settle_ms:
+            raise ValueError("Provide a selector, or settle_ms for a fixed pause")
         return await checked_request({"op": "wait", "tab_id": tab_id, "selector": selector,
                                       "state": state, "timeout_ms": timeout_ms,
-                                      "frame_path": frame_path or [], "document_id": document_id})
+                                      "frame_path": frame_path or [], "document_id": document_id,
+                                      **({"settle_ms": settle_ms} if settle_ms else {})})
 
-    @server.tool()
+    @tool()
     async def regular_browser_snapshot(
         tab_id: str, max_chars: Annotated[int, Field(ge=500, le=15000)] = 8000,
         scope: str | None = None,
@@ -318,7 +363,7 @@ def create_regular_server():
              **({"text_offset": text_offset} if text_offset else {})}, ("snapshot_paging",)
         )
 
-    @server.tool()
+    @tool()
     async def regular_browser_act(
         tab_id: str,
         action: Literal["click", "fill", "select", "check", "uncheck", "hover", "press", "type",
@@ -327,8 +372,20 @@ def create_regular_server():
         value: str = "",
         frame_path: list[str] | None = None, document_id: str | None = None,
         dialog: Literal["dismiss", "accept"] = "dismiss",
+        dialog_value: Annotated[str | None, Field(max_length=500)] = None,
+        dialog_window_ms: Annotated[int | None, Field(ge=0, le=3000)] = None,
+        settle_ms: Annotated[int, Field(ge=0, le=2000)] = 0,
     ):
         """One action on exactly one visible observed CSS match or snapshot ref. Credential fields blocked. No retries.
+
+        Addon 0.3.4: settle_ms (<=2000) pauses before acting, for targets whose
+        listeners attach after an animation. Dialogs raised within
+        dialog_window_ms after the action (default 400 for click/press/check/
+        uncheck/select, else 0; max 3000) get the dialog answer; dialog_value is
+        the text a prompt returns on accept (never a secret: prompts asking for
+        a password/PIN/code are dismissed). At most 5 dialogs are answered per
+        action; a further one stays on screen and the result reports it under
+        pending_dialog with outcome "uncertain" (see regular_browser_dialog).
 
         Addon 0.3.2: pages a click tries to open in a new window/tab (blocked for
         synthetic clicks) open in the agent window instead; the result lists
@@ -360,10 +417,42 @@ def create_regular_server():
                 "selector": selector,
                 "value": value, "frame_path": frame_path or [], "document_id": document_id,
                 **({"dialog": dialog} if dialog != "dismiss" else {}),
+                **({"dialog_value": dialog_value} if dialog_value is not None else {}),
+                **({"dialog_window_ms": dialog_window_ms} if dialog_window_ms is not None else {}),
+                **({"settle_ms": settle_ms} if settle_ms else {}),
             }, ("hover",) if action == "hover" else ("act",)
         )
 
-    @server.tool()
+    @tool()
+    async def regular_browser_dialog(
+        tab_id: str,
+        action: Literal["list", "accept", "dismiss"] = "list",
+        value: Annotated[str | None, Field(max_length=500)] = None,
+        match: Annotated[str | None, Field(min_length=1, max_length=300)] = None,
+        type: Literal["alert", "confirm", "prompt"] | None = None,
+        reload: bool = False,
+        ttl_ms: Annotated[int, Field(ge=1000, le=120000)] = 30000,
+    ):
+        """Page alert/confirm/prompt dialogs of an allowed tab. Addon 0.3.4+.
+
+        list (read-only): dialogs on screen now (type, text, origin; they pause
+        the page until answered), whether the page is paused by one the bridge did
+        not see open, and recently answered ones.
+        accept/dismiss arm one answer for the NEXT page dialog in this page
+        (optionally only of this type / containing match), used once within
+        ttl_ms; value is what a prompt returns (no secrets). Firefox lets no
+        extension answer a dialog already on screen: for one shown while the page
+        loaded, reload=true reloads the page once and answers that same dialog when
+        it reappears (automatic mode; unsaved page state is lost). Otherwise ask
+        the user (regular_browser_attention) or close the tab. No retry.
+        """
+        payload = {"op": "dialog", "tab_id": tab_id, "action": action, "ttl_ms": ttl_ms}
+        payload.update({k: v for k, v in {"value": value, "match": match, "type": type}.items() if v is not None})
+        if reload:
+            payload["reload"] = True
+        return await checked_request(payload, ("page_dialogs",))
+
+    @tool()
     async def regular_browser_attention(
         action: Literal["set", "clear", "list"],
         tab_id: str | None = None,
@@ -387,7 +476,7 @@ def create_regular_server():
             payload["tab_id"] = tab_id
         return await checked_request(payload, ("attention",))
 
-    @server.tool()
+    @tool()
     async def regular_browser_downloads(
         tab_id: str,
         action: Literal["watch", "list", "stop"],
@@ -409,7 +498,7 @@ def create_regular_server():
             ("download_watch",),
         )
 
-    @server.tool()
+    @tool()
     async def regular_browser_save(
         tab_id: str,
         action: Literal["save", "status"] = "save",
@@ -432,7 +521,7 @@ def create_regular_server():
             ("save_document",),
         )
 
-    @server.tool()
+    @tool()
     async def regular_browser_upload(
         tab_id: str,
         selector: str,

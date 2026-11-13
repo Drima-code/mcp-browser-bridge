@@ -1,0 +1,4 @@
+<!doctype html><meta charset="utf-8"><title>Unseen dialog</title>
+<p id="out">start</p>
+<!-- A dialog the hook cannot see: raised through a blank frame's window. -->
+<button id="go" onclick="const f=document.createElement('iframe');document.body.append(f);setTimeout(()=>{document.getElementById('out').textContent='raw:'+f.contentWindow.confirm('Raw confirm?')},300)">Go</button>

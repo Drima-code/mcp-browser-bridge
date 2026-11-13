@@ -1,3 +1,27 @@
+# Page dialogs 0.3.4 — 2026-11-13
+
+Reported on a local Vue annotation tool (127.0.0.1:8765) that calls confirm() on
+load: every op on that tab (and, via the serialized host, on others) failed with
+a generic "Error executing tool". Reproduced in headless Firefox 156 with
+tests/e2e_site/restore.html. Causes: executeScript at document_idle never runs
+while a dialog holds the parser; page timers (act settle window, wait polling)
+are suspended while a dialog is open; the native host handled one request at a
+time; close/screenshot ran the tab content check; and the MCP SDK (2.2.0) hides
+the text of any exception other than ToolError. Fixes: extension/dialogs.js hook
+(registered document_start/allFrames in automatic mode; injected first in manual
+mode) reports natively shown dialogs before showing them; background tracks
+pending dialogs per tab, fails page ops at once, resolves in-flight acts as
+uncertain, liveness probe (page timer) detects unseen dialogs; injection at
+document_start with 3 s bounds; host thread per request (max 8); server wraps
+tool failures in ToolError and only page ops check the content listener. New
+`regular_browser_dialog` (list / arm accept|dismiss / reload=true re-arm via an
+origin-scoped one-shot data registration), act `dialog_value`, `dialog_window_ms`,
+`settle_ms`, wait `settle_ms`; max 5 dialogs per action. Capabilities
+page_dialogs, dialog_values, dialog_window, settle. Verified: 63 tests, ruff,
+web-ext lint 0/0/0, real-Firefox E2E 62/62 (twice). Not yet checked against the
+installed addon or the live page; needs David's AMO signing.
+Unsigned archive: artifacts/mcp-browser-bridge-0.3.4.zip (SHA256 46779c27f5366d7539b36b34979ad47a50e71385df8428697aa73baa212e15c7).
+
 # Save viewer documents 0.3.3 — 2026-11-04
 
 JSTOR (via the UCN library proxy) opens PDFs in Firefox's viewer, where content

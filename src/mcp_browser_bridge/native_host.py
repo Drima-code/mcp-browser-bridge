@@ -143,52 +143,68 @@ def main():
             alive.clear()
 
     threading.Thread(target=receive, daemon=True).start()
+    write_lock = threading.Lock()
+    # Bounded concurrency: one request per connection, each in its own thread,
+    # so a page paused by a dialog cannot stall requests for other tabs.
+    slots = threading.BoundedSemaphore(8)
+
+    def serve(client):
+        with client:
+            client.settimeout(20)
+            try:
+                with client.makefile("rb") as reader:
+                    raw = reader.readline(MAX_MESSAGE + 1)
+                    if len(raw) > MAX_MESSAGE:
+                        raise ValueError("Request too large")
+                    request = json.loads(raw)
+                    if not isinstance(request, dict):
+                        raise ValueError("Request must be an object")
+                request_id = str(uuid4())
+                event, replies = threading.Event(), []
+                with pending_lock:
+                    pending[request_id] = (event, replies)
+                try:
+                    with write_lock:
+                        write_message(sys.stdout.buffer, {**request, "id": request_id})
+                    if not event.wait(15):
+                        response = {
+                            "error": "Extension timeout; outcome unknown. Do not repeat mutation."
+                        }
+                    else:
+                        response = replies[0]
+                finally:
+                    with pending_lock:
+                        pending.pop(request_id, None)
+                client.sendall(json.dumps(response).encode() + b"\n")
+            except (OSError, ValueError, TypeError):
+                try:
+                    client.sendall(
+                        b'{"error":"Native bridge request failed; outcome unknown"}\n'
+                    )
+                except OSError:
+                    pass
+            finally:
+                slots.release()
+
     try:
         with socket.socket(socket.AF_UNIX) as server:
             server.bind(str(path))
             os.chmod(path, 0o600)
-            server.listen(4)
+            server.listen(8)
             server.settimeout(1)
             while alive.is_set():
                 try:
                     client, _ = server.accept()
                 except TimeoutError:
                     continue
-                with client:
-                    client.settimeout(20)
-                    try:
-                        with client.makefile("rb") as reader:
-                            raw = reader.readline(MAX_MESSAGE + 1)
-                            if len(raw) > MAX_MESSAGE:
-                                raise ValueError("Request too large")
-                            request = json.loads(raw)
-                            if not isinstance(request, dict):
-                                raise ValueError("Request must be an object")
-                        request_id = str(uuid4())
-                        event, replies = threading.Event(), []
-                        with pending_lock:
-                            pending[request_id] = (event, replies)
+                if not slots.acquire(timeout=20):
+                    with client:
                         try:
-                            write_message(
-                                sys.stdout.buffer, {**request, "id": request_id}
-                            )
-                            if not event.wait(15):
-                                response = {
-                                    "error": "Extension timeout; outcome unknown. Do not repeat mutation."
-                                }
-                            else:
-                                response = replies[0]
-                        finally:
-                            with pending_lock:
-                                pending.pop(request_id, None)
-                        client.sendall(json.dumps(response).encode() + b"\n")
-                    except (OSError, ValueError, TypeError):
-                        try:
-                            client.sendall(
-                                b'{"error":"Native bridge request failed; outcome unknown"}\n'
-                            )
+                            client.sendall(b'{"error":"Native bridge busy; no request sent"}\n')
                         except OSError:
                             pass
+                    continue
+                threading.Thread(target=serve, args=(client,), daemon=True).start()
     finally:
         path.unlink(missing_ok=True)
         os.close(lock_fd)

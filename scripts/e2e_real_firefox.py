@@ -47,7 +47,7 @@ def serve(port, host):
 
 
 def package(path):
-    files = ["LICENSE", "PRIVACY.md", "background.js", "content.js", "manifest.json", "popup.css", "popup.html", "popup.js"]
+    files = ["LICENSE", "PRIVACY.md", "background.js", "content.js", "dialogs.js", "manifest.json", "popup.css", "popup.html", "popup.js"]
     with zipfile.ZipFile(path, "w") as z:
         for name in files:
             source = ROOT / "extension" / name if (ROOT / "extension" / name).exists() else ROOT / name
@@ -97,7 +97,8 @@ async def tab_with(path, timeout=6):
 async def scenario(base, cross, cv):
     status = await bridge("status")
     wanted = {"open", "navigate", "close", "refs", "keyboard", "screenshot", "picker_upload", "popup_routing",
-              "dialogs", "scroll", "open_frame", "text_paging", "drop_upload", "attention", "save_document"}
+              "dialogs", "scroll", "open_frame", "text_paging", "drop_upload", "attention", "save_document",
+              "page_dialogs", "dialog_values", "dialog_window", "settle"}
     check("status lists every capability", wanted <= set(status["capabilities"]), str(status["capabilities"]))
     board = await tab_with("/index.html")
     check("user tab visible in automatic mode", board)
@@ -221,6 +222,102 @@ async def scenario(base, cross, cv):
     check("save_document stores the viewer PDF", path and path.read_bytes() == expected, err or json.dumps(saved))
     _, err = await attempt("save", tab_id=viewer, action="save", filename="../escape.pdf")
     check("save_document rejects path names", err and "basename" in err, err or "")
+    await dialog_scenario(base)
+
+
+async def timed(op, **arguments):
+    started = time.time()
+    result, err = await attempt(op, **arguments)
+    return result, err, time.time() - started
+
+
+async def dialog_scenario(base):
+    # 1. A dialog the page opens while loading, not caused by the agent.
+    tab = (await bridge("open", url=f"{base}/restore.html"))["tab_id"]
+    await asyncio.sleep(1.5)
+    _, err, took = await timed("snapshot", tab_id=tab, max_chars=500)
+    check("page dialog: snapshot fails fast with its text",
+          err and 'pending page dialog: confirm "Found unsaved work from' in err and took < 3, f"{took:.1f}s {err}")
+    _, err, took = await timed("wait", tab_id=tab, selector="#out", timeout_ms=1000)
+    check("page dialog: wait fails fast", err and "pending page dialog" in err and took < 3, f"{took:.1f}s {err}")
+    status, err = await attempt("status", tab_id=tab)
+    check("page dialog: status reports it", status and status.get("pending_dialog", {}).get("type") == "confirm", err or json.dumps(status))
+    _, _, took = await timed("tabs")
+    check("other requests are not stalled by the paused tab", took < 1, f"{took:.1f}s")
+    listing = await bridge("dialog", tab_id=tab, action="list")
+    pending = listing["pending"]
+    check("dialog list: type, text and origin", pending and pending[0]["type"] == "confirm"
+          and "sintetico.csv" in pending[0]["message"] and pending[0]["origin"] == base, json.dumps(listing))
+    _, err = await attempt("dialog", tab_id=tab, action="accept")
+    check("on-screen dialog cannot be answered in place", err and "reload=true" in err, err or "")
+    result = await bridge("dialog", tab_id=tab, action="accept", reload=True)
+    check("reload with armed answer", result.get("reloaded"), json.dumps(result))
+    check("page restored after armed accept", await wait_text(tab, "restore:true", 6))
+    recent = (await bridge("dialog", tab_id=tab, action="list"))["recent"]
+    check("answered dialog listed as recent", recent and recent[-1]["answered_by"] == "armed"
+          and recent[-1]["answered"] == "accept", json.dumps(recent))
+
+    # 5. Close (and screenshot) work on a paused tab.
+    blocked = (await bridge("open", url=f"{base}/restore.html"))["tab_id"]
+    await asyncio.sleep(1.5)
+    await bridge("focus", tab_id=blocked)
+    shot, err, took = await timed("screenshot", tab_id=blocked)
+    check("screenshot of a paused tab", shot and took < 3, f"{took:.1f}s {err}")
+    closed, err, took = await timed("close", tab_id=blocked)
+    check("close a tab paused by a dialog", closed and closed.get("closed") and took < 3, f"{took:.1f}s {err}")
+
+    # 2-4. Deferred dialogs, prompt values, settle.
+    tab = (await bridge("open", url=f"{base}/dialogs.html"))["tab_id"]
+    await wait_text(tab, "Dialog cases")
+    result = await bridge("act", tab_id=tab, action="click", selector="#late", dialog="accept", dialog_window_ms=1200)
+    check("dialog_window_ms catches a late confirm", result.get("dialogs", [{}])[0].get("message") == "Late confirm?"
+          and await wait_text(tab, "late:true"), json.dumps(result))
+    result = await bridge("act", tab_id=tab, action="click", selector="#name", dialog="accept", dialog_value="Corpus A")
+    check("dialog_value answers a prompt", await wait_text(tab, "name:Corpus A"), json.dumps(result))
+    result = await bridge("act", tab_id=tab, action="click", selector="#identity", dialog="accept", dialog_value="hunter2")
+    check("credential prompt never gets the value", result.get("dialogs", [{}])[0].get("answered") == "dismiss_credential_prompt"
+          and await wait_text(tab, "secret:null"), json.dumps(result))
+    await bridge("act", tab_id=tab, action="click", selector="#openpop", dialog_window_ms=0)
+    result = await bridge("act", tab_id=tab, action="click", selector="#popbtn", dialog="accept", dialog_value="early")
+    check("click before the popover listener is lost (reproduces case 4)", "dialogs" not in result
+          and "pop:none" in await text_of(tab, None), json.dumps(result))
+    result = await bridge("act", tab_id=tab, action="click", selector="#popbtn", settle_ms=600,
+                          dialog="accept", dialog_value="Price")
+    check("settle_ms lets the late listener attach", await wait_text(tab, "pop:Price"), json.dumps(result))
+    paused, err, took = await timed("wait", tab_id=tab, settle_ms=300)
+    check("wait settle_ms is a plain pause", paused and paused.get("paused_ms") == 300, err or "")
+    armed = await bridge("dialog", tab_id=tab, action="accept", type="prompt", value="T1")
+    check("answer armed in place", armed.get("armed", {}).get("value_set"), json.dumps(armed))
+    await bridge("act", tab_id=tab, action="click", selector="#timer")
+    check("armed answer used by a later page dialog", await wait_text(tab, "timer:T1", 4))
+    # Default window misses a 700 ms dialog: now it is reported instead of hanging.
+    await bridge("act", tab_id=tab, action="click", selector="#late")
+    await asyncio.sleep(1)
+    _, err, took = await timed("snapshot", tab_id=tab, max_chars=500)
+    check("late unanswered dialog reported as blocking", err and 'confirm "Late confirm?"' in err and took < 3, f"{took:.1f}s {err}")
+    await bridge("close", tab_id=tab)
+
+    # 3. A page that repeats its prompt: at most 5 answers, the rest pending.
+    tab = (await bridge("open", url=f"{base}/loop.html"))["tab_id"]
+    await wait_text(tab, "n:none")
+    result, err, took = await timed("act", tab_id=tab, action="click", selector="#loop", dialog="accept", dialog_value="")
+    check("prompt loop: 5 answered, then pending", result and result.get("outcome") == "uncertain"
+          and len(result.get("dialogs", [])) == 5 and result.get("pending_dialog", {}).get("type") == "prompt"
+          and took < 4, f"{took:.1f}s {err or json.dumps(result)}")
+    closed, err = await attempt("close", tab_id=tab)
+    check("close the looping tab", closed and closed.get("closed"), err or "")
+
+    # A dialog the hook cannot see still gives a clear error, not a hang.
+    tab = (await bridge("open", url=f"{base}/unhooked.html"))["tab_id"]
+    await wait_text(tab, "start")
+    await bridge("act", tab_id=tab, action="click", selector="#go", dialog_window_ms=0)
+    await asyncio.sleep(1)
+    _, err, took = await timed("snapshot", tab_id=tab, max_chars=500)
+    check("unseen dialog: page reported paused", err and "paused" in err and took < 6, f"{took:.1f}s {err}")
+    listing, err = await attempt("dialog", tab_id=tab, action="list")
+    check("unseen dialog: list says paused", listing and listing.get("paused_without_report"), err or json.dumps(listing))
+    closed, err = await attempt("close", tab_id=tab)
+    check("close the paused tab", closed and closed.get("closed"), err or "")
 
 
 def main():
@@ -241,6 +338,8 @@ def main():
     if not headful:
         options.add_argument("-headless")
     options.set_preference("extensions.webextOptionalPermissionPrompts", False)
+    # Leave page dialogs on screen, as for a real user; the bridge must cope.
+    options.set_capability("unhandledPromptBehavior", "ignore")
     (work / "downloads").mkdir()
     options.set_preference("browser.download.folderList", 2)
     options.set_preference("browser.download.dir", str(work / "downloads"))

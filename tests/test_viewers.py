@@ -6,6 +6,7 @@ import pytest
 from playwright.async_api import async_playwright
 
 SCRIPT = (Path(__file__).resolve().parents[1] / "extension/content.js").read_text()
+DIALOGS = (Path(__file__).resolve().parents[1] / "extension/dialogs.js").read_text()
 
 
 async def install(page):
@@ -546,6 +547,7 @@ async def test_dialogs_answered_and_reported_and_sign_in_popups_stay_native():
             '<button id="google" onclick="window.native=1;window.open(\'https://accounts.google.com/o/oauth2\')">Google</button>')
         await install(page)
         await page.evaluate(XRAY_SHIM)
+        await page.evaluate(DIALOGS)
         # A native popup stand-in: page code that is not the agent's hook.
         await page.evaluate("window.open=function(){window.nativeOpens=(window.nativeOpens||0)+1;return null};0")
         act = "r=>handler({drima:true,op:'act',action:'click',...r})"
@@ -561,7 +563,8 @@ async def test_dialogs_answered_and_reported_and_sign_in_popups_stay_native():
         assert await page.evaluate("window.named") is None
         result = await page.evaluate(act, {"selector": "#google"})
         assert "opened" not in result and await page.evaluate("[window.native, window.nativeOpens, routed.length]") == [1, 1, 0]
-        assert await page.evaluate("[confirm, alert, prompt].every(f => String(f).includes('[native code]'))")
+        # The persistent hook stays; window.open is the page's own again.
+        assert await page.evaluate("!String(window.open).includes('route')")
         await browser.close()
 
 

@@ -1,0 +1,9 @@
+Page dialogs no longer freeze the connection. Some websites show their own "OK / Cancel" or "type a value" boxes (alert, confirm and prompt), sometimes on their own while the page loads, for example "Found unsaved work. Restore it?". Until now such a box silently blocked everything the client tried on that tab, and often on other tabs too. The client now gets a clear message naming the box and its text, other tabs keep working, and the tab can still be closed or captured in a screenshot.
+
+New dialog tool: the client can list the boxes a website tab is showing, with their text and site, and prepare one answer (OK or Cancel, or the text to type into a question box) for the next box that page shows. A box that is already on screen cannot be answered by any extension. For one shown while the page loads, the client can ask to reload the page once with the answer ready; anything unsaved on that page is lost. Otherwise the user answers it. Questions that ask for a password or code are never answered with text.
+
+Actions: a click can now say what to type into a question box it causes, wait up to 3 seconds for boxes that appear a moment later, and pause briefly before clicking controls that only start working after an animation. At most five boxes are answered for one click; if a page keeps asking, the next one is left for the user and reported.
+
+How it works: in automatic access mode the extension now places a small script in website pages as they load, so it is in place before the page can show a box. The script only takes over the page's three box functions. Without a prepared answer it shows the normal box and tells the extension that the box is open. It reads nothing else from the page. In manual mode it is added when you approve a tab. No new permissions.
+
+Everything else is unchanged from 0.3.3. Website approval, password-field filtering, strict single-target matching and single-shot actions remain in place.

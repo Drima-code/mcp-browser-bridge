@@ -1,0 +1,4 @@
+<!doctype html><meta charset="utf-8"><title>Prompt loop</title>
+<!-- Case 3: the page repeats the prompt until the answer is valid. -->
+<button id="loop" onclick="let n;do{n=prompt('Number of annotators (1-9)?')}while(!/^[1-9]$/.test(n??''));document.getElementById('out').textContent='n:'+n">Set</button>
+<p id="out">n:none</p>

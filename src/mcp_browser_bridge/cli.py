@@ -19,7 +19,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("stdio")
     diagnostic = sub.add_parser("call")
-    diagnostic.add_argument("operation", choices=["status", "tabs", "snapshot", "act", "upload", "downloads", "focus", "wait", "attention", "close", "open", "navigate", "screenshot", "save"])
+    diagnostic.add_argument("operation", choices=["status", "tabs", "snapshot", "act", "upload", "downloads", "focus", "wait", "attention", "close", "open", "navigate", "screenshot", "save", "dialog"])
     diagnostic.add_argument("arguments", nargs="?", default="{}")
     args = parser.parse_args()
     if args.command == "stdio":

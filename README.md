@@ -337,7 +337,55 @@ its optional permissions through the popup, and drives the synthetic job site in
 `tests/e2e_site` through the bridge on a private socket: pop-up routing, sign-in
 exemption, dialogs, agent window, refs, keyboard, select/radio/checkbox,
 contenteditable, shadow DOM, frames, hidden-input/picker/drop uploads, scroll
-loading, text paging, screenshots, attention, navigate and close (35 checks).
+loading, text paging, screenshots, attention, navigate, close, viewer saving and
+page dialogs (62 checks).
+
+## Page dialogs (0.3.4)
+
+Native `alert`/`confirm`/`prompt` dialogs pause the page until someone answers,
+and Firefox gives extensions no way to answer one that is already on screen.
+The addon therefore stands in front of the page's three dialog methods
+(`extension/dialogs.js`): during an agent action dialogs get the action's answer,
+an answer armed beforehand is used once, and anything else is shown natively
+for the user, after the extension has been told about it. In automatic access
+mode this hook is registered at `document_start` in every website frame, so
+dialogs a page opens while loading are seen too; in manual mode it is installed
+when the bridge first loads into an approved page. Without an armed answer the
+hook behaves like the native method.
+
+- **Clear errors instead of hangs.** While an approved tab shows a dialog,
+  snapshot/wait/act/upload fail at once with `Tab blocked by a pending page
+  dialog: confirm "…"`, an action in flight returns `outcome: "uncertain"` with
+  `pending_dialog`, and `status(tab_id)` reports `pending_dialog`. A page paused
+  by a dialog the hook never saw (opened before the bridge loaded, or through a
+  blank frame) is detected with a page-timer probe and reported as paused. The
+  native host now serves requests concurrently, so one paused tab no longer
+  stalls calls for other tabs. Bridge errors now reach the MCP client with their
+  text (the SDK otherwise reduces them to "Error executing tool").
+- **`regular_browser_dialog(tab_id, action)`**: `list` shows dialogs on screen
+  (type, text, origin, frame), whether the page is paused by an unseen one, and
+  recently answered ones. `accept`/`dismiss` (optional `value` for prompts,
+  `type`, `match`, `ttl_ms` ≤ 120 s) arm one answer for the next matching page
+  dialog. For a dialog already on screen, `reload=true` reloads the page once and
+  answers that same dialog (type and text) when it reappears during loading —
+  automatic mode only, and unsaved page state is lost. Otherwise ask the user
+  (`regular_browser_attention`) or close the tab.
+- **`act`**: `dialog_value` is what a prompt returns on accept (≤ 500 chars;
+  prompts whose text asks for a password, PIN, token or code are dismissed and
+  reported as `dismiss_credential_prompt`). `dialog_window_ms` (0–3000; default
+  400 for click/press/check/uncheck/select, otherwise 0) is how long dialogs after
+  the action still get its answer. At most 5 dialogs are answered per action; a
+  page that keeps asking (an invalid-answer loop) gets its next dialog shown
+  natively and reported as pending, with `dialogs_limit_reached`.
+- **`settle_ms`** (≤ 2000) on `act` pauses before acting, for controls whose
+  listeners attach after an animation (e.g. a popover's `shown` event); on `wait`
+  it pauses even if the target already matches, and without a selector it is a
+  plain pause.
+- `close`, `screenshot`, `focus`, `navigate`, `save` and `dialog` no longer check
+  the page's content listener first, so they work on a paused tab.
+
+Synthetic reproductions live in `tests/e2e_site/` (`restore.html`, `dialogs.html`,
+`loop.html`, `unhooked.html`) and are exercised by the real-Firefox E2E.
 
 ## Several Firefox profiles
 
