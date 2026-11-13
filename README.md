@@ -338,7 +338,7 @@ its optional permissions through the popup, and drives the synthetic job site in
 exemption, dialogs, agent window, refs, keyboard, select/radio/checkbox,
 contenteditable, shadow DOM, frames, hidden-input/picker/drop uploads, scroll
 loading, text paging, screenshots, attention, navigate, close, viewer saving and
-page dialogs (62 checks).
+page dialogs and context clicks (66 checks).
 
 ## Page dialogs (0.3.4)
 
@@ -384,8 +384,22 @@ hook behaves like the native method.
 - `close`, `screenshot`, `focus`, `navigate`, `save` and `dialog` no longer check
   the page's content listener first, so they work on a paused tab.
 
+## Right-click menus (0.3.5)
+
+`act` `context_click` right-clicks one target, with the same rules as `click`
+(exactly one visible match; credential, disabled and Google-account rows
+refused; single shot, no retry). It sends the right-button sequence Firefox uses
+on Linux (pointerdown/mousedown, `contextmenu`, pointerup/mouseup, `auxclick`;
+never `click`), so a page that draws its own right-click menu (for example
+choosing an aspect category in an annotation tool) opens it. Snapshot, then click
+the menu item. `page_menu: true` means a page handler took the event; `false`
+means none did, and the browser's own context menu never opens for synthetic
+events. Dialogs it raises are handled like a click's (400 ms window). The
+page's handler may move or remove the target; only navigation stops the
+sequence early. Capability `context_click`.
+
 Synthetic reproductions live in `tests/e2e_site/` (`restore.html`, `dialogs.html`,
-`loop.html`, `unhooked.html`) and are exercised by the real-Firefox E2E.
+`loop.html`, `unhooked.html`, `contextmenu.html`) and are exercised by the real-Firefox E2E.
 
 ## Several Firefox profiles
 

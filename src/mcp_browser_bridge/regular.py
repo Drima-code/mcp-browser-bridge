@@ -114,7 +114,7 @@ async def checked_request(payload, required=()):
         feature = "hover" if payload.get("action") == "hover" else "act"
         if payload.get("action") in ("press", "type"):
             features.add("keyboard")
-        if payload.get("action") in ("scroll", "open_frame"):
+        if payload.get("action") in ("scroll", "open_frame", "context_click"):
             features.add(payload["action"])
         if payload.get("dialog"):
             features.add("dialogs")
@@ -315,6 +315,11 @@ def create_regular_server():
 
         Use observed frame selectors for same-origin descent. Supports open shadow
         selectors separated by ' >>> '. Pass snapshot document_id to reject reloads.
+        Addon 0.3.5: context_click right-clicks the target once (same rules as
+        click: one visible match, credential/disabled controls refused) and fires
+        its contextmenu event, so a page's own right-click menu opens; then
+        snapshot and click a menu item. page_menu=false means no page handler took
+        it (the browser's own menu never opens for synthetic events).
         Addon 0.3.4: settle_ms (<=2000) pauses first even if the target already
         matches, e.g. until a popover's animation ends and its listeners attach;
         with no selector it is a plain pause.
@@ -366,7 +371,7 @@ def create_regular_server():
     @tool()
     async def regular_browser_act(
         tab_id: str,
-        action: Literal["click", "fill", "select", "check", "uncheck", "hover", "press", "type",
+        action: Literal["click", "context_click", "fill", "select", "check", "uncheck", "hover", "press", "type",
                         "scroll", "open_frame"],
         selector: str,
         value: str = "",
@@ -378,6 +383,11 @@ def create_regular_server():
     ):
         """One action on exactly one visible observed CSS match or snapshot ref. Credential fields blocked. No retries.
 
+        Addon 0.3.5: context_click right-clicks the target once (same rules as
+        click: one visible match, credential/disabled controls refused) and fires
+        its contextmenu event, so a page's own right-click menu opens; then
+        snapshot and click a menu item. page_menu=false means no page handler took
+        it (the browser's own menu never opens for synthetic events).
         Addon 0.3.4: settle_ms (<=2000) pauses before acting, for targets whose
         listeners attach after an animation. Dialogs raised within
         dialog_window_ms after the action (default 400 for click/press/check/

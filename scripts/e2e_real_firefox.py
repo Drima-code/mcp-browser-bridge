@@ -98,7 +98,7 @@ async def scenario(base, cross, cv):
     status = await bridge("status")
     wanted = {"open", "navigate", "close", "refs", "keyboard", "screenshot", "picker_upload", "popup_routing",
               "dialogs", "scroll", "open_frame", "text_paging", "drop_upload", "attention", "save_document",
-              "page_dialogs", "dialog_values", "dialog_window", "settle"}
+              "page_dialogs", "dialog_values", "dialog_window", "settle", "context_click"}
     check("status lists every capability", wanted <= set(status["capabilities"]), str(status["capabilities"]))
     board = await tab_with("/index.html")
     check("user tab visible in automatic mode", board)
@@ -223,6 +223,23 @@ async def scenario(base, cross, cv):
     _, err = await attempt("save", tab_id=viewer, action="save", filename="../escape.pdf")
     check("save_document rejects path names", err and "basename" in err, err or "")
     await dialog_scenario(base)
+    await context_scenario(base)
+
+
+async def context_scenario(base):
+    # 6. Right-click menus a page draws itself (ASQE-DPT categories).
+    tab = (await bridge("open", url=f"{base}/contextmenu.html"))["tab_id"]
+    await wait_text(tab, "Annotate aspects")
+    result, err = await attempt("act", tab_id=tab, action="context_click", selector="#tok-battery")
+    check("context_click opens the page's menu", result and result.get("page_menu") is True, err or json.dumps(result))
+    text = await text_of(tab, None)
+    check("right-button events in order, no click",
+          "pointerdown:2 mousedown:2 contextmenu:2 mouseup:2 auxclick:2" in text and "click:0" not in text, text)
+    await bridge("act", tab_id=tab, action="click", selector="#cat-quality")
+    check("menu item picked after context_click", await wait_text(tab, "tok-battery=QUALITY"))
+    result, err = await attempt("act", tab_id=tab, action="context_click", selector="#plain")
+    check("context_click without a page menu says so", result and result.get("page_menu") is False, err or json.dumps(result))
+    await bridge("close", tab_id=tab)
 
 
 async def timed(op, **arguments):

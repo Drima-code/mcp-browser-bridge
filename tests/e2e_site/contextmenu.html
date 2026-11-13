@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><title>Annotate aspects</title>
+<style>#menu{position:absolute;border:1px solid;background:#fff}#menu button{display:block}</style>
+<h1>Annotate aspects</h1>
+<!-- Like ASQE-DPT: right-click a token, pick a category from the page's own menu. -->
+<p>The <span id="tok-battery" class="token">battery</span> lasts long, the
+<span id="tok-screen" class="token">screen</span> is dim. <span id="plain">plain text</span></p>
+<div id="menu" hidden><button id="cat-quality">QUALITY</button><button id="cat-price">PRICE</button></div>
+<p id="out">none</p>
+<p id="log"></p>
+<script>
+let current = null;
+const log = t => document.getElementById('log').textContent += t + ' ';
+for (const tok of document.querySelectorAll('.token')) {
+  for (const t of ['pointerdown', 'mousedown', 'mouseup', 'auxclick', 'click'])
+    tok.addEventListener(t, e => log(t + ':' + e.button));
+  tok.addEventListener('contextmenu', e => {
+    e.preventDefault(); log('contextmenu:' + e.button); current = tok;
+    const menu = document.getElementById('menu');
+    menu.style.left = e.clientX + 'px'; menu.style.top = e.clientY + 'px'; menu.hidden = false;
+  });
+}
+for (const b of document.querySelectorAll('#menu button')) b.addEventListener('click', () => {
+  document.getElementById('out').textContent = current.id + '=' + b.textContent;
+  document.getElementById('menu').hidden = true;
+});
+</script>

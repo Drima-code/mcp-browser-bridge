@@ -1,4 +1,4 @@
-"""Page dialogs (0.3.4): synthetic pages, a stubbed extension API and local IPC only."""
+"""Page dialogs (0.3.5): synthetic pages, a stubbed extension API and local IPC only."""
 
 import asyncio
 import json
@@ -120,12 +120,12 @@ const browser={windows:{update:async()=>{}},
  tabs:{get:async id=>{if(!tabs.has(id))throw new Error('no tab');return tabs.get(id)},executeScript:async(id,o)=>{assert.equal(o.runAt,'document_start')},
   remove:async id=>{removed.push(id);tabs.delete(id);events.removed(id)},reload:async id=>reloads.push(id),
   sendMessage:async(id,r,o)=>{sent.push(r.op);
-   if(r.op==='content_status')return {content_version:'0.3.4'};
+   if(r.op==='content_status')return {content_version:'0.3.5'};
    if(r.op==='liveness')return paused?new Promise(()=>{}):{alive:true};
    if(r.op==='act')return actReply||new Promise(()=>{});
    return {ok:true}},
   query:async()=>Array.from(tabs.values()),onRemoved:event('removed'),onUpdated:event('updated')},
- runtime:{id:'bridge',getManifest:()=>({version:'0.3.4'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
+ runtime:{id:'bridge',getManifest:()=>({version:'0.3.5'}),getURL:p=>'moz-extension://bridge/'+p,connectNative:()=>port,onMessage:event('ui')},
  permissions:{contains:async p=>!p.permissions,onRemoved:event('permissionRemoved')},
  storage:{local:{get:async()=>({mode}),set:async()=>{}}},
  browserAction:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
@@ -208,7 +208,7 @@ async def test_dialog_tool_payloads_and_page_independent_ops(monkeypatch):
     async def fake(payload):
         if payload["op"] == "status":
             statuses.append(payload.get("tab_id"))
-            return {"protocol_version": 1, "addon_version": "0.3.4",
+            return {"protocol_version": 1, "addon_version": "0.3.5",
                     "capabilities": ["act", "wait", "page_dialogs", "dialog_values", "dialog_window",
                                      "settle", "dialogs", "close", "screenshot"]}
         payloads.append(payload)
@@ -295,3 +295,44 @@ async def test_native_host_serves_requests_concurrently(tmp_path, monkeypatch):
     finally:
         process.stdin.close()
         await asyncio.to_thread(process.wait, 5)
+
+
+async def test_context_click_fires_contextmenu_once_with_click_rules():
+    async with async_playwright() as p:
+        browser, page = await hooked_page(
+            p, '<span id="tok">battery</span><span id="none">plain</span>'
+               '<button id="off" disabled>Off</button><input id="pw" type="password">'
+               '<span id="gone">x</span>'
+               '<script>window.log=[];const tok=document.getElementById("tok");'
+               'for(const t of ["pointerdown","mousedown","contextmenu","pointerup","mouseup","auxclick","click"])'
+               ' tok.addEventListener(t,e=>{log.push(t+":"+e.button);if(t==="contextmenu")e.preventDefault()});'
+               'document.getElementById("gone").addEventListener("contextmenu",e=>{e.preventDefault();e.target.remove()});'
+               '</script>')
+        ctx = "s=>handler({drima:true,op:'act',action:'context_click',selector:s})"
+        result = await page.evaluate(ctx, "#tok")
+        assert result["ok"] is True and result["page_menu"] is True
+        assert await page.evaluate("log") == ["pointerdown:2", "mousedown:2", "contextmenu:2",
+                                              "pointerup:2", "mouseup:2", "auxclick:2"]
+        assert (await page.evaluate(ctx, "#none"))["page_menu"] is False
+        # The page may remove the target in its own handler (menu overlays): not an error.
+        assert (await page.evaluate(ctx, "#gone"))["page_menu"] is True
+        for selector, message in [("#off", "Sensitive or disabled"), ("#pw", "Sensitive or disabled"),
+                                  ("span", "exactly one visible match")]:
+            with pytest.raises(Exception, match=message):
+                await page.evaluate(ctx, selector)
+        await browser.close()
+
+
+async def test_context_click_negotiates_its_capability(monkeypatch):
+    calls = []
+
+    async def fake(payload):
+        calls.append(payload)
+        if payload["op"] == "status":
+            return {"protocol_version": 1, "addon_version": "0.3.4", "capabilities": ["act"]}
+        return {"ok": True}
+
+    monkeypatch.setattr(regular, "request", fake)
+    with pytest.raises(RuntimeError, match="lacks context_click"):
+        await regular.checked_request({"op": "act", "tab_id": "1", "action": "context_click", "selector": "#t"})
+    assert [c["op"] for c in calls] == ["status"]  # Old addon never receives it.

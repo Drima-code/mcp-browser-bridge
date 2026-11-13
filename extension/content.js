@@ -243,7 +243,7 @@
       return {...attachFiles(captured, state.files, transfer), via_picker:true};
     }
     window.addEventListener("pagehide", () => uploads.clear());
-    function click(e) {
+    function click(e, context = false) {
       const url = location.href;
       const ensureTarget = () => {
         if (window.document !== document || location.href !== url || !e.isConnected || !visible(e) || disabled(e) ||
@@ -253,8 +253,27 @@
       e.scrollIntoView({block:"nearest", inline:"nearest"});
       const rect = e.getBoundingClientRect();
       const mouse = {bubbles:true, cancelable:true, composed:true, view:window,
-        button:0, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2};
+        button:context ? 2 : 0, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2};
       const pointer = {...mouse, pointerId:1, pointerType:"mouse", isPrimary:true};
+      if (context) {
+        // Right button, in Firefox's Linux order: down, contextmenu, up, auxclick.
+        // No click/activation. A synthetic event never opens the browser's own menu;
+        // the page's menu opens only if the page handles contextmenu itself.
+        const compatibility = e.dispatchEvent(new PointerEvent("pointerdown", {...pointer, buttons:2}));
+        ensureTarget();
+        if (compatibility) { e.dispatchEvent(new MouseEvent("mousedown", {...mouse, buttons:2})); ensureTarget(); }
+        const handled = !e.dispatchEvent(new MouseEvent("contextmenu", {...mouse, buttons:2}));
+        // The page's handler may move or hide the target (e.g. a menu overlay):
+        // only a navigation or document replacement stops the remaining events.
+        if (window.document !== document || location.href !== url)
+          throw new Error("Page changed during the context click; inspect before another action");
+        if (e.isConnected) {
+          e.dispatchEvent(new PointerEvent("pointerup", {...pointer, buttons:0}));
+          if (compatibility) e.dispatchEvent(new MouseEvent("mouseup", {...mouse, buttons:0}));
+          e.dispatchEvent(new PointerEvent("auxclick", {...pointer, buttons:0}));
+        }
+        return {page_menu:handled};
+      }
       // .click() alone misses mousedown-driven widgets (e.g. React Select).
       // Respect cancellation of pointerdown (suppresses compatibility mouse events)
       // and mousedown (suppresses our focus default), without replaying activation.
@@ -304,7 +323,7 @@
         throw new Error("dialog_value must be text of at most 500 characters");
       const settleMs = boundedMs(request.settle_ms, 2000, "settle_ms", 0);
       const windowMs = boundedMs(request.dialog_window_ms, 3000, "dialog_window_ms",
-        ["click", "press", "check", "uncheck", "select"].includes(request.action) ? 400 : 0);
+        ["click", "context_click", "press", "check", "uncheck", "select"].includes(request.action) ? 400 : 0);
       if (dialogState.act) throw new Error("Another action is still settling in this page; inspect before acting again.");
       // Let animations finish and late listeners attach (e.g. a popover's "shown").
       if (settleMs) await settle(settleMs);
@@ -475,6 +494,12 @@
         }
       }
       else if (action === "click") { click(e); }
+      else if (action === "context_click") {
+        const {page_menu} = click(e, true);
+        return {ok:true, page_menu, notice:page_menu ?
+          "Context click sent once; the page handled it (its own menu). Inspect the next snapshot for the menu. No automatic retry." :
+          "Context click sent once, but no page handler cancelled it: this page may have no custom menu, and the browser's own menu never opens for synthetic events. No automatic retry."};
+      }
       else if (action === "fill") {
         if (e.readOnly) throw new Error("Read-only control; use the visible widget");
         if (e.isContentEditable) {
@@ -663,7 +688,7 @@
     if (!request.drima) return;
     if (request.expected_url && location.href !== request.expected_url)
       throw new Error("Tab navigated; inspect before retrying");
-    if (request.op === "content_status") return Promise.resolve({content_version:"0.3.4"});
+    if (request.op === "content_status") return Promise.resolve({content_version:"0.3.5"});
     // A page timer only fires while the page runs: a native alert/confirm/prompt
     // (or a stuck script) suspends it, while this message listener still answers.
     if (request.op === "liveness") return new Promise(resolve => window.setTimeout(() => resolve({alive:true}), 0));

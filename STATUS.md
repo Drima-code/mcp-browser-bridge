@@ -1,3 +1,16 @@
+# Context click 0.3.5 — 2026-11-13
+
+Right-click menus drawn by the page (ASQE-DPT category choice) were unreachable:
+act had no contextmenu action. New act `context_click` (capability
+`context_click`): same target rules as click; right-button pointer/mouse down,
+contextmenu, up, auxclick (Linux order), no click(); returns `page_menu` =
+contextmenu was cancelled by a page handler. Synthetic page
+tests/e2e_site/contextmenu.html. Folded on top of 0.3.4 (built the same day,
+not yet uploaded as far as known); 0.3.5 contains everything from 0.3.4.
+Verified: 65 tests, ruff, web-ext lint 0/0/0, real-Firefox E2E 66/66 (twice).
+Installed addon and live page not checked; needs David's AMO signing.
+Unsigned archive: artifacts/mcp-browser-bridge-0.3.5.zip (SHA256 69b3ad6bfcf0f00d81b5261b0b103f817aab7b94db4fb1f7c436fb80dd482350).
+
 # Page dialogs 0.3.4 — 2026-11-13
 
 Reported on a local Vue annotation tool (127.0.0.1:8765) that calls confirm() on
